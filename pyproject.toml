@@ -1,25 +1,39 @@
 [project]
 name = "speakeasy"
 version = "0.1.0"
-description = "Add your description here"
+description = "OpenAI-compatible audio transcription server: Whisper + Moonshine on ROCm and CUDA"
 readme = "README.md"
+license = { text = "Apache-2.0" }
 requires-python = ">=3.12"
 dependencies = [
-    "accelerate>=1.15.0",
-    "av<19",
     "fastapi>=0.143.0",
     "faster-whisper>=1.2.1",
-    "python-multipart>=0.0.32",
-    "speechbrain>=1.1.1",
-    "torch>=2.14.1",
-    "torchaudio>=2.11.0",
-    "transformers>=5.19.0",
+    "av<19",
     "uvicorn>=0.54.0",
+    "python-multipart>=0.0.32",
+    "pydantic-settings>=2.15.0",
+    "soundfile>=0.13",
+    "scipy>=1.14",
+    "transformers>=4.46",
+    "torch>=2.5",
+    "accelerate>=1.0",
 ]
 
+[project.optional-dependencies]
+# CUDA deployments get the default PyPI ctranslate2 (pulled by faster-whisper).
+# ROCm deployments must install the official CTranslate2 ROCm wheel instead —
+# see Dockerfile.rocm.
+rocm = []
+
 [project.scripts]
-speakeasy = "speakeasy:main"
+speakeasy = "speakeasy.server:main"
 
 [build-system]
 requires = ["uv_build>=0.12.5,<0.13.0"]
 build-backend = "uv_build"
+
+[dependency-groups]
+dev = [
+    "httpx>=0.28.1",
+    "pytest>=9.1.1",
+]
