@@ -9,6 +9,9 @@ dependencies = [
     "fastapi>=0.143.0",
     "faster-whisper>=1.2.1",
     "python-multipart>=0.0.32",
+    "speechbrain>=1.1.1",
+    "torch>=2.14.1",
+    "torchaudio>=2.11.0",
     "uvicorn>=0.54.0",
 ]
 
