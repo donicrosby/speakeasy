@@ -12,8 +12,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 import speakeasy.server as server
-from speakeasy.engines import TranscriptionResult, Segment
-
+from speakeasy.engines import Segment, TranscriptionResult
 
 EXPECTED_TEXT = "And so my fellow Americans ask not what your country can do for you"
 

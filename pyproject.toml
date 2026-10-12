@@ -37,3 +37,15 @@ dev = [
     "httpx>=0.28.1",
     "pytest>=9.1.1",
 ]
+
+[tool.ruff.lint]
+# Explicit selection: ruff's "default" set includes opinionated rules that
+# fight deliberate patterns in this codebase.
+# BLE001 — blind `except Exception` is intentional for device probing and the
+#          optional Moonshine fast path (config.py, engines.py, server.py).
+# SIM115 — NamedTemporaryFile is closed explicitly inside try/finally with
+#          os.unlink cleanup; a context manager doesn't fit the flow.
+# B008   — FastAPI dependency injection *requires* File()/Form() calls in
+#          argument defaults (server.py).
+select = ["F", "I"]
+ignore = ["BLE001", "SIM115", "B008"]

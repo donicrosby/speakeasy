@@ -12,14 +12,13 @@ from __future__ import annotations
 import logging
 import os
 import tempfile
-import time
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, File, Form, Query, UploadFile
-from fastapi.responses import JSONResponse, PlainTextResponse, Response
+from fastapi.responses import JSONResponse, Response
 
 from .config import Settings, resolve_device_compute
-from .engines import MoonshineEngine, TranscriptionResult, WhisperEngine, probe_duration
+from .engines import MoonshineEngine, WhisperEngine, probe_duration
 from .responses import FORMATS
 
 log = logging.getLogger("speakeasy")
