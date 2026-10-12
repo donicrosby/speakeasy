@@ -33,6 +33,16 @@ requires = ["uv_build>=0.12.5,<0.13.0"]
 build-backend = "uv_build"
 
 [dependency-groups]
+# The Docker images (Dockerfile.cuda / Dockerfile.rocm) are built FROM the
+# official pytorch/pytorch and rocm/pytorch containers, which already ship a
+# matching GPU torch + CUDA/ROCm runtime stack. `uv sync` there skips the
+# lockfile's torch/triton/nvidia-*/cuda-* packages (--no-install-package)
+# so the base image's stack is used unmodified; on ROCm the PyPI
+# ctranslate2 is additionally replaced by the official CTranslate2 ROCm
+# wheel. Nothing needs to be installed from these groups by hand — they
+# exist to document where the GPU wheels come from.
+rocm = []
+cuda = []
 dev = [
     "httpx>=0.28.1",
     "pytest>=9.1.1",
