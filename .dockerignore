@@ -1,0 +1,13 @@
+__pycache__/
+.pytest_cache/
+.venv/
+dist/
+build/
+*.egg-info/
+.git/
+.github/
+Dockerfile.*
+docker-compose.yml
+README.docker.md
+spikes/
+tests/

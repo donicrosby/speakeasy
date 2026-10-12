@@ -1,0 +1,61 @@
+# Speakeasy — one compose file, two GPU variants. Run exactly one:
+#
+#   docker compose up cuda    # NVIDIA (requires NVIDIA Container Toolkit)
+#   docker compose up rocm    # AMD (requires ROCm-capable kernel/driver)
+#
+# Both services publish port 8080 and share the `hf-models` named volume
+# for the Hugging Face model cache, so switching variants doesn't
+# re-download models.
+
+services:
+  cuda:
+    image: ghcr.io/donicrosby/speakeasy:cuda
+    build:
+      context: .
+      dockerfile: Dockerfile.cuda
+    ports:
+      - "8080:8080"
+    environment:
+      SPEAKEASY_PORT: "8080"
+      SPEAKEASY_HOST: 0.0.0.0
+      SPEAKEASY_HF_HOME: /models
+      # Override as needed, e.g. SPEAKEASY_WHISPER_MODEL: distil-large-v3
+    volumes:
+      - hf-models:/models
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+    restart: unless-stopped
+
+  rocm:
+    image: ghcr.io/donicrosby/speakeasy:rocm
+    build:
+      context: .
+      dockerfile: Dockerfile.rocm
+    ports:
+      - "8080:8080"
+    environment:
+      SPEAKEASY_PORT: "8080"
+      SPEAKEASY_HOST: 0.0.0.0
+      SPEAKEASY_HF_HOME: /models
+    volumes:
+      - hf-models:/models
+    # AMD GPU access: KFD compute device + DRM render nodes. The video and
+    # render groups grant access to /dev/dri nodes without running as root.
+    devices:
+      - /dev/kfd:/dev/kfd
+      - /dev/dri:/dev/dri
+    group_add:
+      - video
+      - render
+    # ROCm user-space needs generous shared memory / IPC for MIOpen & co.
+    ipc: host
+    shm_size: 8g
+    restart: unless-stopped
+
+volumes:
+  hf-models:

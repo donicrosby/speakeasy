@@ -1511,10 +1511,12 @@ requires-dist = [
 provides-extras = ["rocm"]
 
 [package.metadata.requires-dev]
+cuda = []
 dev = [
     { name = "httpx", specifier = ">=0.28.1" },
     { name = "pytest", specifier = ">=9.1.1" },
 ]
+rocm = []
 
 [[package]]
 name = "starlette"

@@ -1,0 +1,61 @@
+name: docker
+
+on:
+  push:
+    branches: [main]
+    tags: ['v*.*.*']
+  pull_request:
+    # Build (but never push) on PRs so Dockerfile changes are CI-verified.
+
+env:
+  IMAGE: ghcr.io/${{ github.repository_owner }}/speakeasy
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        variant: [cuda, rocm]
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: docker/setup-buildx-action@v3
+
+      - name: Log in to ghcr.io
+        if: github.event_name != 'pull_request'
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Image metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.IMAGE }}
+          tags: |
+            # variant name: `cuda` / `rocm`
+            type=raw,value=${{ matrix.variant }}
+            # per-commit variant: `cuda-abc1234` / `rocm-abc1234`
+            type=sha,prefix=${{ matrix.variant }}-
+            # semver tags: v1.2.3 -> 1.2.3-cuda / 1.2-cuda / 1-cuda
+            type=semver,pattern={{version}},suffix=-${{ matrix.variant }}
+            type=semver,pattern={{major}}.{{minor}},suffix=-${{ matrix.variant }}
+            # `latest` alias only on the cuda image, only on main
+            type=raw,value=latest,enable=${{ matrix.variant == 'cuda' && github.ref == 'refs/heads/main' }}
+
+      - name: Build (and push) ${{ matrix.variant }}
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: Dockerfile.${{ matrix.variant }}
+          push: ${{ github.event_name != 'pull_request' }}
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha,scope=${{ matrix.variant }}
+          cache-to: type=gha,mode=max,scope=${{ matrix.variant }}
