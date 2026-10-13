@@ -30,6 +30,9 @@ class Settings(BaseSettings):
     # HuggingFace cache dir (models persist across restarts)
     hf_home: str | None = None
 
+    # Auth — static bearer token, OpenAI-compatible. Empty = no auth (dev).
+    api_key: str = ""
+
 
 def resolve_device_compute(settings: Settings) -> tuple[str, str]:
     """Resolve auto device/compute_type into concrete values.

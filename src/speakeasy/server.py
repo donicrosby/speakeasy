@@ -14,8 +14,9 @@ import os
 import tempfile
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI, File, Form, Query, UploadFile
+from fastapi import FastAPI, File, Form, Query, UploadFile, Depends, HTTPException, Security
 from fastapi.responses import JSONResponse, Response
+from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 
 from .config import Settings, resolve_device_compute
 from .engines import MoonshineEngine, WhisperEngine, probe_duration
@@ -24,6 +25,18 @@ from .responses import FORMATS
 log = logging.getLogger("speakeasy")
 
 settings = Settings()
+
+_bearer = HTTPBearer(auto_error=False)
+
+
+def require_auth(creds: HTTPAuthorizationCredentials | None = Security(_bearer)) -> None:
+    """Reject requests when SPEAKEASY_API_KEY is set and the token doesn't match."""
+    if not settings.api_key:
+        return  # auth disabled
+    if creds is None or creds.credentials != settings.api_key:
+        raise HTTPException(status_code=401, detail="Invalid or missing API key")
+
+
 if settings.hf_home:
     os.environ["HF_HOME"] = settings.hf_home
 
@@ -81,7 +94,7 @@ async def ready():
     }
 
 
-@app.get("/v1/models")
+@app.get("/v1/models", dependencies=[Depends(require_auth)])
 async def list_models():
     return {
         "object": "list",
@@ -101,7 +114,7 @@ def _model_ids() -> list[str]:
     return ids
 
 
-@app.post("/v1/audio/transcriptions")
+@app.post("/v1/audio/transcriptions", dependencies=[Depends(require_auth)])
 async def transcribe(
     file: UploadFile = File(...),
     model: str = Form(default=""),
