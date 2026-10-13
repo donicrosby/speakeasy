@@ -40,6 +40,13 @@ ENV PYTHONUNBUFFERED=1 \
 
 WORKDIR /app
 
+# System runtime libs the wheels dynamically link but do NOT bundle:
+# libgomp (OpenMP — AMD's whl-next torch requires it, unlike the pytorch
+# wheels that bundle it) and libstdc++ (CTranslate2's ROCm wheel).
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends libgomp1 libstdc++6 \
+    && rm -rf /var/lib/apt/lists/*
+
 # Locked dependency tree, ROCm 10.1 variant (torch + the pip ROCm runtime
 # from the AMD index). --inexact so the later CT2 swap survives the final
 # project sync without being pruned as extraneous.
