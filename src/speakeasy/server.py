@@ -165,7 +165,15 @@ async def transcribe(
     headers = {
         "X-Speakeasy-Engine": result.engine,
         "X-Speakeasy-Elapsed": str(result.elapsed_seconds),
+        "X-Speakeasy-Duration": str(result.duration),
+        "X-Speakeasy-RTF": str(round(result.elapsed_seconds / max(result.duration, 0.01), 3)),
     }
+
+    log.info(
+        "%s engine=%s duration=%.2fs elapsed=%.3fs rtf=%.3f",
+        "transcribe", result.engine, result.duration, result.elapsed_seconds,
+        result.elapsed_seconds / max(result.duration, 0.01),
+    )
 
     if isinstance(body, dict):
         return JSONResponse(content=body, headers=headers)

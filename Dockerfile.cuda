@@ -42,6 +42,8 @@ RUN --mount=type=cache,sharing=locked,target=/root/.cache/uv \
 # Sanity: the torch in the venv must be a CUDA build.
 RUN /app/.venv/bin/python -c "import torch; assert torch.cuda.is_available() or torch.version.cuda is not None, 'torch is not a CUDA build'; print('torch', torch.__version__, 'cuda', torch.version.cuda)"
 
+VOLUME /models
+
 EXPOSE 8080
 
 HEALTHCHECK --interval=30s --timeout=10s --start-period=300s --retries=5 \

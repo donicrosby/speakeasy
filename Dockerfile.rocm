@@ -160,6 +160,8 @@ RUN set -eux; \
 RUN /app/.venv/bin/python -c "import torch, ctranslate2, faster_whisper, speakeasy; assert torch.version.hip is not None, 'torch is not a ROCm/HIP build'; print('torch', torch.__version__, 'hip', torch.version.hip, '| ctranslate2', ctranslate2.__version__)" \
  && /app/.venv/bin/python -c "import glob; data=open(glob.glob('/app/.venv/lib/python3.12/site-packages/ctranslate2.libs/libctranslate2*.so*')[0],'rb').read(); assert b'hipGetDevice' in data or b'libamdhip' in data, 'ctranslate2 is not the HIP build'; print('ctranslate2 HIP linkage OK')"
 
+VOLUME /models
+
 EXPOSE 8080
 
 HEALTHCHECK --interval=30s --timeout=10s --start-period=300s --retries=5 \
