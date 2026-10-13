@@ -7,13 +7,11 @@ then transcription accuracy improves vs VAD-only.
 import os
 import tempfile
 import time
-from pathlib import Path
 
-import numpy as np
 import soundfile as sf
 import torch
-from scipy import signal as scipy_signal
 from faster_whisper import WhisperModel
+from scipy import signal as scipy_signal
 from speechbrain.inference.enhancement import SpectralMaskEnhancement
 
 
@@ -80,32 +78,32 @@ def main():
         source="speechbrain/metricgan-plus-voicebank",
         savedir="/tmp/metricgan-plus",
     )
-    print(f"Models loaded in {time.monotonic()-t0:.1f}s")
+    print(f"Models loaded in {time.monotonic() - t0:.1f}s")
 
     # Use JFK clip as clean reference
     clean_path = "/tmp/jfk.flac"
     if not os.path.exists(clean_path):
         print("Downloading JFK test file...")
         import urllib.request
+
         urllib.request.urlretrieve(
-            "https://github.com/openai/whisper/raw/main/tests/jfk.flac",
-            clean_path
+            "https://github.com/openai/whisper/raw/main/tests/jfk.flac", clean_path
         )
 
     expected = "And so, my fellow Americans, ask not what your country can do for you, ask what you can do for your country."
 
-    print("\n" + "="*60)
+    print("\n" + "=" * 60)
     print("BASELINE: clean audio")
-    print("="*60)
+    print("=" * 60)
     result = transcribe(whisper, clean_path, vad_filter=True)
     print(f"Result: {result}")
     print(f"Match: {result.lower() == expected.lower()}")
 
     # Test at various noise levels
     for snr in [10, 5, 0]:
-        print(f"\n{'='*60}")
+        print(f"\n{'=' * 60}")
         print(f"SNR: {snr} dB")
-        print("="*60)
+        print("=" * 60)
 
         noisy_path = add_noise(clean_path, snr_db=snr)
 
@@ -123,8 +121,14 @@ def main():
         print(f"Denoise+VAD ({t_denoised:.1f}s): {result_denoised[:80]}...")
 
         # Compare
-        vad_match = expected.lower() in result_vad.lower() or result_vad.lower() in expected.lower()
-        denoised_match = expected.lower() in result_denoised.lower() or result_denoised.lower() in expected.lower()
+        vad_match = (
+            expected.lower() in result_vad.lower()
+            or result_vad.lower() in expected.lower()
+        )
+        denoised_match = (
+            expected.lower() in result_denoised.lower()
+            or result_denoised.lower() in expected.lower()
+        )
         print(f"VAD match: {vad_match}, Denoised match: {denoised_match}")
 
         # Cleanup

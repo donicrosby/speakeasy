@@ -38,7 +38,9 @@ settings = Settings()
 _bearer = HTTPBearer(auto_error=False)
 
 
-def require_auth(creds: HTTPAuthorizationCredentials | None = Security(_bearer)) -> None:
+def require_auth(
+    creds: HTTPAuthorizationCredentials | None = Security(_bearer),
+) -> None:
     """Reject requests when SPEAKEASY_API_KEY is set and the token doesn't match."""
     if not settings.api_key:
         return  # auth disabled
@@ -64,8 +66,12 @@ async def lifespan(app: FastAPI):
     log.info("device=%s compute=%s", device, compute)
 
     try:
-        whisper = WhisperEngine(settings.whisper_model, device, compute, settings.beam_size)
-        log.info("whisper loaded in %.1fs (%s)", whisper.load_seconds, settings.whisper_model)
+        whisper = WhisperEngine(
+            settings.whisper_model, device, compute, settings.beam_size
+        )
+        log.info(
+            "whisper loaded in %.1fs (%s)", whisper.load_seconds, settings.whisper_model
+        )
     except Exception as e:
         startup_error = f"whisper failed to load: {e}"
         log.exception(startup_error)
@@ -73,7 +79,11 @@ async def lifespan(app: FastAPI):
     if settings.moonshine_enabled:
         try:
             moonshine = MoonshineEngine(settings.moonshine_model)
-            log.info("moonshine loaded in %.1fs (%s)", moonshine.load_seconds, settings.moonshine_model)
+            log.info(
+                "moonshine loaded in %.1fs (%s)",
+                moonshine.load_seconds,
+                settings.moonshine_model,
+            )
         except Exception as e:
             # Fast path is optional — log and continue
             log.warning("moonshine failed to load, fast path disabled: %s", e)
@@ -93,7 +103,9 @@ async def health():
 @app.get("/health/ready")
 async def ready():
     if startup_error:
-        return JSONResponse(status_code=503, content={"status": "error", "detail": startup_error})
+        return JSONResponse(
+            status_code=503, content={"status": "error", "detail": startup_error}
+        )
     if whisper is None:
         return JSONResponse(status_code=503, content={"status": "loading"})
     return {
@@ -130,17 +142,28 @@ async def transcribe(
     language: str | None = Form(default=None),
     response_format: str = Form(default="json"),
     temperature: float = Form(default=0.0),
-    fast: bool = Query(default=False, description="Force Moonshine fast path (short English audio)"),
+    fast: bool = Query(
+        default=False, description="Force Moonshine fast path (short English audio)"
+    ),
     vad: bool = Query(default=True, description="Silero VAD filter (whisper only)"),
-    word_timestamps: bool = Query(default=False, description="Word-level timestamps (whisper only)"),
+    word_timestamps: bool = Query(
+        default=False, description="Word-level timestamps (whisper only)"
+    ),
 ):
     if whisper is None:
-        return JSONResponse(status_code=503, content={"error": {"message": startup_error or "models not loaded"}})
+        return JSONResponse(
+            status_code=503,
+            content={"error": {"message": startup_error or "models not loaded"}},
+        )
 
     if response_format not in FORMATS:
         return JSONResponse(
             status_code=400,
-            content={"error": {"message": f"Unsupported response_format '{response_format}'. Supported: {', '.join(FORMATS)}"}},
+            content={
+                "error": {
+                    "message": f"Unsupported response_format '{response_format}'. Supported: {', '.join(FORMATS)}"
+                }
+            },
         )
 
     audio_bytes = await file.read()
@@ -188,12 +211,17 @@ async def transcribe(
         "X-Speakeasy-Engine": result.engine,
         "X-Speakeasy-Elapsed": str(result.elapsed_seconds),
         "X-Speakeasy-Duration": str(result.duration),
-        "X-Speakeasy-RTF": str(round(result.elapsed_seconds / max(result.duration, 0.01), 3)),
+        "X-Speakeasy-RTF": str(
+            round(result.elapsed_seconds / max(result.duration, 0.01), 3)
+        ),
     }
 
     log.info(
         "%s engine=%s duration=%.2fs elapsed=%.3fs rtf=%.3f",
-        "transcribe", result.engine, result.duration, result.elapsed_seconds,
+        "transcribe",
+        result.engine,
+        result.duration,
+        result.elapsed_seconds,
         result.elapsed_seconds / max(result.duration, 0.01),
     )
 
@@ -205,7 +233,9 @@ async def transcribe(
 def main():
     import uvicorn
 
-    logging.basicConfig(level=logging.INFO, format="%(asctime)s %(name)s %(levelname)s %(message)s")
+    logging.basicConfig(
+        level=logging.INFO, format="%(asctime)s %(name)s %(levelname)s %(message)s"
+    )
     uvicorn.run("speakeasy.server:app", host=settings.host, port=settings.port)
 
 

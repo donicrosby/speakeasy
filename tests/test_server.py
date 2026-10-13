@@ -184,5 +184,7 @@ def test_503_when_models_not_loaded(monkeypatch, wav_file):
     monkeypatch.setattr(server, "startup_error", "whisper failed to load: boom")
     c = TestClient(server.app)
     with open(wav_file, "rb") as f:
-        r = c.post("/v1/audio/transcriptions", files={"file": ("t.wav", f, "audio/wav")})
+        r = c.post(
+            "/v1/audio/transcriptions", files={"file": ("t.wav", f, "audio/wav")}
+        )
     assert r.status_code == 503
