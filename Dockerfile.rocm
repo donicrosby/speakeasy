@@ -1,143 +1,79 @@
 # syntax=docker/dockerfile:1
 
-# Speakeasy — AMD ROCm variant
+# Speakeasy — AMD ROCm variant (ROCm 10.1)
 #
-# Base image: the ROCm PyTorch container AMD provides (rocm/pytorch), which
-# already ships a ROCm/HIP-enabled torch plus the full ROCm runtime
-# (HIP/rocBLAS/MIOpen — the shared libraries the CTranslate2 ROCm wheel
-# dynamically links against). ROCm 7.2.x natively supports gfx1151 (Strix
-# Halo), so no HSA_OVERRIDE_GFX_VERSION workaround is needed. Mirrors
-# Dockerfile.cuda (pytorch/pytorch base) so both variants are built the
-# same way:
+# Base: python:3.12-slim. No dedicated pytorch/ROCm container base is needed:
+# AMD productized the entire ROCm 10.1 runtime as pip wheels on
+# stable.repo.amd.com/rocm/whl-next/. `uv sync --extra rocm101` pulls
+# torch[device-gfx1151] (2.14.0+rocm10.1.0), which drags in rocm[libraries],
+# rocm-sdk-core/-libraries/-device-gfx1151, the amd-torch-device-gfx1151
+# kernel shims, AMD's own triton build, and rocm-bootstrap (sets
+# LD_LIBRARY_PATH at import). No apt ROCm repo, no skip-lists.
 #
-#   1. `uv sync --frozen --no-dev` installs the locked dependency tree into
-#      the base image's own Python environment (/opt/venv, where its torch
-#      lives — UV_PROJECT_ENVIRONMENT points uv there) — EXCEPT torch,
-#      triton, every nvidia-*/cuda-* package the lockfile would pull AND
-#      ctranslate2, via `--no-install-package` skips. The PyPI (CUDA) torch
-#      plus ~7 GB of nvidia-* wheels are never downloaded; the base image's
-#      ROCm stack is the single source of truth. If the base image's torch
-#      ever falls below the floor in pyproject.toml (torch>=2.5), bump the
-#      base tag or install torch explicitly from
-#      https://download.pytorch.org/whl/rocm7.2 — never the default PyPI
-#      wheel. (If the lockfile gains another nvidia-*/cuda-* package, add
-#      it to the skip list.)
-#   2. ctranslate2 is installed afterwards from the official CTranslate2
-#      v4.7.1 ROCm release (rocm-python-wheels-Linux.zip ->
-#      temp-linux/*cp312*x86_64*.whl), replacing the CUDA-only PyPI wheel.
-#      The ROCm build is HIP-backed but still exposes device="cuda" to
-#      callers — no application code changes needed.
+# The one thing no index provides: ctranslate2's ROCm wheel. PyPI only hosts
+# the CUDA build, so the official CTranslate2 release asset
+# (rocm-python-wheels-Linux.zip) is fetched and installed over the PyPI wheel.
+# It is HIP-backed but still exposes device="cuda" — no app code changes.
+# Its dynamic HIP linkage is satisfied by the pip-installed rocm-sdk-*
+# libraries; the build-time import assert below fails loudly if not.
 #
-# Note on asymmetry with Dockerfile.cuda: there a fresh project venv with
-# --system-site-packages can see the base's torch because pytorch/pytorch
-# installs it into the system environment. Here the base's torch lives in
-# /opt/venv itself, which a NEW venv would not inherit (system-site-packages
-# only covers the interpreter's real site-packages), so we sync into
-# /opt/venv directly instead of creating a new environment.
+# gfx1151 (Strix Halo) kernels ship in the wheel via the device-gfx1151 extra;
+# no HSA_OVERRIDE needed.
 #
 # Build:  docker build -f Dockerfile.rocm -t speakeasy:rocm .
 # Run:    docker run --device=/dev/kfd --device=/dev/dri --group-add video \
-#                   --group-add render -p 8080:8080 speakeasy:rocm
+#                  --group-add render -p 8080:8080 speakeasy:rocm
 
-ARG ROCM_PYTORCH_TAG=rocm7.2.4_ubuntu24.04_py3.12_pytorch_release_2.10.0
-ARG CT2_VERSION=4.7.1
+FROM python:3.12-slim
 
-FROM rocm/pytorch:${ROCM_PYTORCH_TAG}
+ARG CT2_VERSION=4.8.2
 
-ARG CT2_VERSION
-
-# uv (kept in pip-compatibility mode — this is a base-image-vendored env,
-# not a uv-managed interpreter).
 COPY --from=ghcr.io/astral-sh/uv:0.12.5 /uv /uvx /bin/
 
 ENV PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1 \
     UV_LINK_MODE=copy \
-    # Install the app INTO the base image's env (its ROCm torch lives here);
-    # --inexact below keeps the pre-existing packages untouched.
-    UV_PROJECT_ENVIRONMENT=/opt/venv \
-    # Models land in a predictable place; mount a volume here to persist them.
+    UV_PROJECT_ENVIRONMENT=/app/.venv \
     SPEAKEASY_HF_HOME=/models \
     SPEAKEASY_PORT=8080 \
     SPEAKEASY_HOST=0.0.0.0
 
 WORKDIR /app
 
-# Locked dependency tree minus the torch/ROCm stack provided by the base
-# image and minus ctranslate2 (replaced below with the ROCm wheel). The
-# skip list must be repeated on every `uv sync` below: without it a later
-# sync would "helpfully" install the missing packages from PyPI.
+# Locked dependency tree, ROCm 10.1 variant (torch + the pip ROCm runtime
+# from the AMD index). --inexact so the later CT2 swap survives the final
+# project sync without being pruned as extraneous.
 COPY pyproject.toml uv.lock README.md ./
-RUN uv sync --frozen --no-dev --no-install-project --inexact \
-      --no-install-package torch \
-      --no-install-package triton \
-      --no-install-package ctranslate2 \
-      --no-install-package nvidia-cublas \
-      --no-install-package nvidia-cuda-cupti \
-      --no-install-package nvidia-cuda-nvrtc \
-      --no-install-package nvidia-cuda-runtime \
-      --no-install-package nvidia-cudnn-cu13 \
-      --no-install-package nvidia-cufft \
-      --no-install-package nvidia-cufile \
-      --no-install-package nvidia-curand \
-      --no-install-package nvidia-cusolver \
-      --no-install-package nvidia-cusparse \
-      --no-install-package nvidia-cusparselt-cu13 \
-      --no-install-package nvidia-nccl-cu13 \
-      --no-install-package nvidia-nvjitlink \
-      --no-install-package nvidia-nvshmem-cu13 \
-      --no-install-package nvidia-nvtx \
-      --no-install-package cuda-bindings \
-      --no-install-package cuda-pathfinder \
-      --no-install-package cuda-toolkit
+RUN --mount=type=cache,target=/root/.cache/uv \
+    uv sync --frozen --no-dev --no-install-project --extra rocm101 --inexact
 
-COPY src/ src/
-RUN uv sync --frozen --no-dev --inexact \
-      --no-install-package torch \
-      --no-install-package triton \
-      --no-install-package ctranslate2 \
-      --no-install-package nvidia-cublas \
-      --no-install-package nvidia-cuda-cupti \
-      --no-install-package nvidia-cuda-nvrtc \
-      --no-install-package nvidia-cuda-runtime \
-      --no-install-package nvidia-cudnn-cu13 \
-      --no-install-package nvidia-cufft \
-      --no-install-package nvidia-cufile \
-      --no-install-package nvidia-curand \
-      --no-install-package nvidia-cusolver \
-      --no-install-package nvidia-cusparse \
-      --no-install-package nvidia-cusparselt-cu13 \
-      --no-install-package nvidia-nccl-cu13 \
-      --no-install-package nvidia-nvjitlink \
-      --no-install-package nvidia-nvshmem-cu13 \
-      --no-install-package nvidia-nvtx \
-      --no-install-package cuda-bindings \
-      --no-install-package cuda-pathfinder \
-      --no-install-package cuda-toolkit
-
-# Swap the PyPI (CUDA) ctranslate2 for the official ROCm wheel. pip/uv
-# cannot install from a zip of wheels directly, so fetch the release asset,
-# extract the cp312 manylinux x86_64 wheel, and install it into /opt/venv.
+# Swap the PyPI (CUDA) ctranslate2 for the official ROCm wheel. Its HIP
+# linkage resolves against the pip rocm-sdk-* libs installed above.
 RUN set -eux; \
-    apt-get update && apt-get install -y --no-install-recommends curl unzip ca-certificates; \
+    apt-get update \
+    && apt-get install -y --no-install-recommends curl unzip ca-certificates \
+    && rm -rf /var/lib/apt/lists/*; \
     mkdir -p /tmp/ct2; \
     curl -fsSL -o /tmp/ct2/rocm-wheels.zip \
       "https://github.com/OpenNMT/CTranslate2/releases/download/v${CT2_VERSION}/rocm-python-wheels-Linux.zip"; \
     unzip -o -q /tmp/ct2/rocm-wheels.zip 'temp-linux/*cp312*x86_64*.whl' -d /tmp/ct2; \
-    uv pip install --python /opt/venv/bin/python "$(ls /tmp/ct2/temp-linux/*cp312*x86_64*.whl)"; \
-    rm -rf /tmp/ct2 /var/lib/apt/lists/*; \
-    uv pip list --python /opt/venv/bin/python | grep -i '^ctranslate2 '
+    uv pip install --python /app/.venv/bin/python "$(ls /tmp/ct2/temp-linux/*cp312*x86_64*.whl)"; \
+    rm -rf /tmp/ct2; \
+    uv pip list --python /app/.venv/bin/python | grep -i '^ctranslate2 '
 
-# Sanity check (lightweight, no reinstall attempts): the torch in /opt/venv
-# must be the base image's HIP build, and the app's critical imports must
-# resolve — ctranslate2 included, now the ROCm wheel.
-RUN /opt/venv/bin/python -c "import torch, ctranslate2, faster_whisper, speakeasy; assert torch.version.hip is not None, 'torch is not a ROCm/HIP build'; print('torch', torch.__version__, 'hip', torch.version.hip, '| ctranslate2', ctranslate2.__version__)"
+COPY src/ src/
+RUN --mount=type=cache,sharing=locked,target=/root/.cache/uv \
+    uv sync --frozen --no-dev --extra rocm101 --inexact
+
+# Sanity: torch must be the HIP build and ctranslate2 must import (this is
+# where a missing/broken ROCm runtime would surface at build time, loudly).
+RUN /app/.venv/bin/python -c "import torch, ctranslate2, faster_whisper, speakeasy; assert torch.version.hip is not None, 'torch is not a ROCm/HIP build'; print('torch', torch.__version__, 'hip', torch.version.hip, '| ctranslate2', ctranslate2.__version__)"
 
 EXPOSE 8080
 
 HEALTHCHECK --interval=30s --timeout=10s --start-period=300s --retries=5 \
-    CMD ["/opt/venv/bin/python", "-c", \
+    CMD ["/app/.venv/bin/python", "-c", \
          "import urllib.request,sys; \
           sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8080/health', timeout=5).status == 200 else 1)"]
 
-CMD ["/opt/venv/bin/speakeasy"]
+CMD ["/app/.venv/bin/speakeasy"]

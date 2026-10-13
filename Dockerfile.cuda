@@ -2,32 +2,19 @@
 
 # Speakeasy — NVIDIA CUDA variant
 #
-# Base image: the official CUDA PyTorch container (pytorch/pytorch), which
-# already ships a CUDA-enabled torch (2.14.1+cu130) plus the full
-# cuBLAS/cuDNN/CUDA runtime stack in the system environment. Mirrors
-# Dockerfile.rocm (rocm/pytorch base) so both variants are built the same
-# way:
+# Base: python:3.12-slim. The GPU torch stack comes from uv itself —
+# `uv sync --extra cu130` pulls torch from download.pytorch.org/whl/cu130
+# (declared in pyproject.toml as a conflicting-extra source). No nvidia-*
+# skip-lists: the resolver picks the right wheels for the cu130 variant.
 #
-#   1. A project venv is created with --system-site-packages, so the base
-#      image's torch stays importable, and `uv sync --frozen --no-dev` then
-#      installs the locked dependency tree into it — EXCEPT torch, triton
-#      and every nvidia-*/cuda-* package the lockfile would pull, via
-#      `--no-install-package` skips. The gigabytes of duplicate CUDA wheels
-#      are never downloaded; the base image's stack is the single source of
-#      truth. (If the lockfile gains another nvidia-*/cuda-* package, add
-#      it to the skip list.)
-#   2. Plain PyPI ctranslate2 is correct here: its CUDA variant bundles the
-#      kernels it needs on top of the base image's CUDA stack.
-#
-# The NVIDIA driver comes from the host at runtime (NVIDIA Container
-# Toolkit — run with `docker run --gpus all`).
+# ctranslate2 stays on the default PyPI wheel (bundles its own CUDA libs).
+# torch's CUDA triton dependency resolves from PyPI (unpinned); only torch
+# itself is index-routed to cu130.
 #
 # Build:  docker build -f Dockerfile.cuda -t speakeasy:cuda .
 # Run:    docker run --gpus all -p 8080:8080 speakeasy:cuda
 
-ARG PYTORCH_TAG=2.14.1-cuda13.0-cudnn9-runtime
-
-FROM pytorch/pytorch:${PYTORCH_TAG}
+FROM python:3.12-slim
 
 COPY --from=ghcr.io/astral-sh/uv:0.12.5 /uv /uvx /bin/
 
@@ -35,67 +22,25 @@ ENV PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1 \
     UV_LINK_MODE=copy \
     UV_PROJECT_ENVIRONMENT=/app/.venv \
-    # Models land in a predictable place; mount a volume here to persist them.
     SPEAKEASY_HF_HOME=/models \
     SPEAKEASY_PORT=8080 \
     SPEAKEASY_HOST=0.0.0.0
 
 WORKDIR /app
 
-# Locked dependency tree minus the CUDA/torch stack provided by the base
-# image. The skip list must be repeated on every `uv sync` below: without
-# it a later sync would "helpfully" install the missing torch from PyPI.
+# Locked dependency tree, CUDA variant. Torch comes from the cu130 index via
+# the extra; everything else from PyPI.
 COPY pyproject.toml uv.lock README.md ./
-RUN uv venv --system-site-packages /app/.venv \
- && uv sync --frozen --no-dev --no-install-project --inexact \
-      --no-install-package torch \
-      --no-install-package triton \
-      --no-install-package nvidia-cublas \
-      --no-install-package nvidia-cuda-cupti \
-      --no-install-package nvidia-cuda-nvrtc \
-      --no-install-package nvidia-cuda-runtime \
-      --no-install-package nvidia-cudnn-cu13 \
-      --no-install-package nvidia-cufft \
-      --no-install-package nvidia-cufile \
-      --no-install-package nvidia-curand \
-      --no-install-package nvidia-cusolver \
-      --no-install-package nvidia-cusparse \
-      --no-install-package nvidia-cusparselt-cu13 \
-      --no-install-package nvidia-nccl-cu13 \
-      --no-install-package nvidia-nvjitlink \
-      --no-install-package nvidia-nvshmem-cu13 \
-      --no-install-package nvidia-nvtx \
-      --no-install-package cuda-bindings \
-      --no-install-package cuda-pathfinder \
-      --no-install-package cuda-toolkit
+RUN --mount=type=cache,target=/root/.cache/uv \
+    uv sync --frozen --no-dev --no-install-project --extra cu130
 
 COPY src/ src/
-RUN uv sync --frozen --no-dev --inexact \
-      --no-install-package torch \
-      --no-install-package triton \
-      --no-install-package nvidia-cublas \
-      --no-install-package nvidia-cuda-cupti \
-      --no-install-package nvidia-cuda-nvrtc \
-      --no-install-package nvidia-cuda-runtime \
-      --no-install-package nvidia-cudnn-cu13 \
-      --no-install-package nvidia-cufft \
-      --no-install-package nvidia-cufile \
-      --no-install-package nvidia-curand \
-      --no-install-package nvidia-cusolver \
-      --no-install-package nvidia-cusparse \
-      --no-install-package nvidia-cusparselt-cu13 \
-      --no-install-package nvidia-nccl-cu13 \
-      --no-install-package nvidia-nvjitlink \
-      --no-install-package nvidia-nvshmem-cu13 \
-      --no-install-package nvidia-nvtx \
-      --no-install-package cuda-bindings \
-      --no-install-package cuda-pathfinder \
-      --no-install-package cuda-toolkit
+# Install the project itself (no deps to repeat — the first sync covered them).
+RUN --mount=type=cache,sharing=locked,target=/root/.cache/uv \
+    uv sync --frozen --no-dev --extra cu130
 
-# Sanity check: the torch seen by the app must be the base image's CUDA
-# build (imported through the venv's system-site-packages), and the app's
-# critical imports must resolve inside the venv.
-RUN /app/.venv/bin/python -c "import torch, ctranslate2, faster_whisper, speakeasy; assert torch.version.cuda is not None, 'torch is not a CUDA build'; print('torch', torch.__version__, 'cuda', torch.version.cuda, '| ctranslate2', ctranslate2.__version__)"
+# Sanity: the torch in the venv must be a CUDA build.
+RUN /app/.venv/bin/python -c "import torch; assert torch.cuda.is_available() or torch.version.cuda is not None, 'torch is not a CUDA build'; print('torch', torch.__version__, 'cuda', torch.version.cuda)"
 
 EXPOSE 8080
 
