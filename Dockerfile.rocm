@@ -108,7 +108,8 @@ ENV PYTHONUNBUFFERED=1 \
     UV_PROJECT_ENVIRONMENT=/app/.venv \
     SPEAKEASY_HF_HOME=/models \
     SPEAKEASY_PORT=8080 \
-    SPEAKEASY_HOST=0.0.0.0
+    SPEAKEASY_HOST=0.0.0.0 \
+    LD_LIBRARY_PATH=/app/.venv/lib/python3.12/site-packages/_rocm_sdk_libraries/lib:/app/.venv/lib/python3.12/site-packages/_rocm_sdk_core/lib
 
 WORKDIR /app
 
