@@ -15,37 +15,66 @@ dependencies = [
     "soundfile>=0.13",
     "scipy>=1.14",
     "transformers>=4.46",
-    "torch>=2.5",
     "accelerate>=1.0",
 ]
 
+# ---------------------------------------------------------------------------
+# Accelerator selection — uv conflicting extras (docs.astral.sh/uv/guides/
+# integration/pytorch/#configuring-accelerators-with-optional-dependencies)
+#
+# ONE universal lockfile resolves all four variants; `uv sync --extra <x>`
+# picks the matching GPU wheels:
+#
+#   uv sync --extra cpu     # CPU-only (default for local dev/tests)
+#   uv sync --extra cu130   # NVIDIA CUDA (download.pytorch.org/whl/cu130)
+#   uv sync --extra rocm    # AMD ROCm 7.2 fallback (download.pytorch.org/whl/rocm7.2)
+#   uv sync --extra rocm101 # AMD ROCm 10.1 (stable.repo.amd.com/rocm/whl-next)
+#
+# The extras are declared conflicting so they can never coexist in one env.
+# NOTE: `torch` intentionally lives in the EXTRAS, not base dependencies —
+# base deps stay accelerator-agnostic (dev on macOS, CPU CI, tests).
+# ---------------------------------------------------------------------------
 [project.optional-dependencies]
-# CUDA deployments get the default PyPI ctranslate2 (pulled by faster-whisper).
-# ROCm deployments must install the official CTranslate2 ROCm wheel instead —
-# see Dockerfile.rocm.
-rocm = []
-
-[project.scripts]
-speakeasy = "speakeasy.server:main"
-
-[build-system]
-requires = ["uv_build>=0.12.5,<0.13.0"]
-build-backend = "uv_build"
-
-[dependency-groups]
-# The Docker images (Dockerfile.cuda / Dockerfile.rocm) are built FROM the
-# official pytorch/pytorch and rocm/pytorch containers, which already ship a
-# matching GPU torch + CUDA/ROCm runtime stack. `uv sync` there skips the
-# lockfile's torch/triton/nvidia-*/cuda-* packages (--no-install-package)
-# so the base image's stack is used unmodified; on ROCm the PyPI
-# ctranslate2 is additionally replaced by the official CTranslate2 ROCm
-# wheel. Nothing needs to be installed from these groups by hand — they
-# exist to document where the GPU wheels come from.
-rocm = []
-cuda = []
-dev = [
-    "httpx>=0.28.1",
-    "pytest>=9.1.1",
+cpu = [
+    "torch>=2.5",
+]
+cu130 = [
+    "torch>=2.5",
+    # CUDA torch>=2.14 depends on plain `triton`; declared so tool.uv.sources
+    # can scope it to the pytorch-cu130 index (uv requires the declaration).
+    "triton>=3.0; sys_platform == 'linux'",
+]
+# NOTE: only torch is declared explicitly. torch's own metadata pulls the
+# triton variant it needs (triton-rocm for 2.14+, pytorch-triton-rocm for
+# older); tool.uv.sources routes those names to the ROCm index below.
+rocm = [
+    "torch>=2.5",
+    # Declared so tool.uv.sources can scope it to the pytorch-rocm index;
+    # torch>=2.14 rocm wheels require triton-rocm>=3.8 at resolve time.
+    "triton-rocm>=3.6.0; sys_platform == 'linux'",
+]
+# ROCm 10.1 via AMD's own pip ecosystem (stable.repo.amd.com/rocm/whl-next).
+# AMD productized the whole runtime as wheels: torch pulls rocm[libraries],
+# triton (AMD build), rocm-bootstrap, and per-arch amd-torch-device-* kernels.
+# `device-gfx1151` selects the Strix Halo kernel shim; the resolver then picks
+# up amd-torch-device-gfx1151/-gfx115x from the same index.
+rocm101 = [
+    "torch[device-gfx1151]>=2.14.0; sys_platform == 'linux'",
+    # AMD's torch build depends on `triton` (not triton-rocm); declaring it so
+    # tool.uv.sources can scope the name to the AMD index.
+    "triton>=3.0; sys_platform == 'linux'",
+    # torch[device-gfx1151] hard-deps on these; uv requires every extra-scoped
+    # sources entry to be declared in the extra, so the closure lives here.
+    "amd-torch-device-gfx1151>=2.14.0; sys_platform == 'linux'",
+    "amd-torch-device-gfx115x>=2.14.0; sys_platform == 'linux'",
+    # rocm[libraries] -> rocm-sdk-core + rocm-sdk-libraries, all ==10.1.0 and
+    # all served only by the AMD index.
+    "rocm>=10.1.0; sys_platform == 'linux'",
+    "rocm-sdk-core>=10.1.0; sys_platform == 'linux'",
+    "rocm-sdk-libraries>=10.1.0; sys_platform == 'linux'",
+    # amd-torch-device-gfx1151 -> rocm-sdk-device-gfx1151 (the HIP kernels).
+    "rocm-sdk-device-gfx1151>=10.1.0; sys_platform == 'linux'",
+    "rocm-bootstrap; sys_platform == 'linux'",
 ]
 
 [tool.ruff.lint]
@@ -59,3 +88,113 @@ dev = [
 #          argument defaults (server.py).
 select = ["F", "I"]
 ignore = ["BLE001", "SIM115", "B008"]
+
+[tool.uv]
+# The three accelerator extras are mutually exclusive by construction.
+conflicts = [
+    [
+        { extra = "cpu" },
+        { extra = "cu130" },
+    ],
+    [
+        { extra = "cpu" },
+        { extra = "rocm" },
+    ],
+    [
+        { extra = "cu130" },
+        { extra = "rocm" },
+    ],
+    [
+        { extra = "cpu" },
+        { extra = "rocm101" },
+    ],
+    [
+        { extra = "cu130" },
+        { extra = "rocm101" },
+    ],
+    [
+        { extra = "rocm" },
+        { extra = "rocm101" },
+    ],
+]
+
+[tool.uv.sources]
+# Pin torch to the right index per extra; unmatched extras fall through to
+# the CPU-only/accelerator-agnostic PyPI wheel.
+torch = [
+    { index = "pytorch-cpu", extra = "cpu" },
+    { index = "pytorch-cu130", extra = "cu130" },
+    { index = "pytorch-rocm", extra = "rocm" },
+    { index = "amd-rocm101", extra = "rocm101" },
+]
+# torch's ROCm wheels depend on a triton variant; the dep name changed over
+# time (pytorch-triton-rocm -> triton-rocm). Only the CURRENT name is routed:
+# the lock resolves torch>=2.11 on every supported python, and those wheels
+# depend on triton-rocm (a sources entry for the legacy name errors out since
+# the legacy package is not declared in any extra).
+triton-rocm = [
+    { index = "pytorch-rocm", extra = "rocm" },
+]
+# AMD's rocm10.1.0 torch deps on plain `triton` (their HIP build); route it
+# to the AMD index. NOT routed for cu130: PyPI serves the CUDA triton, and
+# declaring it under cu130 pollutes the universal-lock cpu split.
+triton = [
+    { index = "amd-rocm101", extra = "rocm101" },
+]
+# torch[device-gfx1151] -> amd-torch-device-gfx1151/-gfx115x kernel shims;
+# the whole ROCm runtime closure below ships only on the AMD index.
+amd-torch-device-gfx1151 = [
+    { index = "amd-rocm101", extra = "rocm101" },
+]
+amd-torch-device-gfx115x = [
+    { index = "amd-rocm101", extra = "rocm101" },
+]
+rocm = [
+    { index = "amd-rocm101", extra = "rocm101" },
+]
+rocm-sdk-core = [
+    { index = "amd-rocm101", extra = "rocm101" },
+]
+rocm-sdk-libraries = [
+    { index = "amd-rocm101", extra = "rocm101" },
+]
+rocm-sdk-device-gfx1151 = [
+    { index = "amd-rocm101", extra = "rocm101" },
+]
+rocm-bootstrap = [
+    { index = "amd-rocm101", extra = "rocm101" },
+]
+
+[[tool.uv.index]]
+name = "pytorch-cpu"
+url = "https://download.pytorch.org/whl/cpu"
+explicit = true
+
+[[tool.uv.index]]
+name = "pytorch-cu130"
+url = "https://download.pytorch.org/whl/cu130"
+explicit = true
+
+[[tool.uv.index]]
+name = "pytorch-rocm"
+url = "https://download.pytorch.org/whl/rocm7.2"
+explicit = true
+
+[[tool.uv.index]]
+name = "amd-rocm101"
+url = "https://stable.repo.amd.com/rocm/whl-next/"
+explicit = true
+
+[project.scripts]
+speakeasy = "speakeasy.server:main"
+
+[build-system]
+requires = ["uv_build>=0.12.5,<0.13.0"]
+build-backend = "uv_build"
+
+[dependency-groups]
+dev = [
+    "httpx>=0.28.1",
+    "pre-commit>=4.0",
+    "pytest>=9.1.1",
+]
