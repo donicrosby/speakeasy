@@ -24,7 +24,7 @@ class Settings(BaseSettings):
     vad_filter: bool = True
 
     # Server
-    host: str = "0.0.0.0"
+    bind: str = "0.0.0.0"  # SPEAKEASY_BIND — address uvicorn listens on
     port: int = 8080
 
     # HuggingFace cache dir (models persist across restarts)

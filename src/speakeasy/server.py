@@ -236,7 +236,7 @@ def main():
     logging.basicConfig(
         level=logging.INFO, format="%(asctime)s %(name)s %(levelname)s %(message)s"
     )
-    uvicorn.run("speakeasy.server:app", host=settings.host, port=settings.port)
+    uvicorn.run("speakeasy.server:app", host=settings.bind, port=settings.port)
 
 
 if __name__ == "__main__":
