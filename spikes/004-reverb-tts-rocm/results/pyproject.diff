@@ -1,0 +1,20 @@
+77a78,90
+>     # Declared here as well as in `tts`: the torchaudio source entry is scoped
+>     # to this extra, and uv requires a routed package to sit in that extra.
+>     # Pinned to the rocm10.1.0 build: AMD's index also lists 2.11.1+rocm10.2.0,
+>     # which sorts higher and would otherwise be picked against the 10.1 runtime.
+>     "torchaudio==2.11.1+rocm10.1.0; sys_platform == 'linux'",
+> ]
+> # TTS (Reverb voice cloning) — optional engine, combinable with any accelerator
+> # extra: `uv sync --extra rocm101 --extra tts`.
+> tts = [
+>     "reverb-tts>=1.0.1",
+>     # reverb-tts resamples the reference clip with torchaudio (CPU side). Declared
+>     # so tool.uv.sources can route it to the AMD index under rocm101, like torch.
+>     "torchaudio>=2.11; sys_platform == 'linux'",
+141a155,159
+>     { index = "amd-rocm101", extra = "rocm101" },
+> ]
+> # torchaudio (reverb-tts dependency): AMD ships 2.11.1+rocm10.1.0 with a
+> # torch>=2.11 floor; the other extras fall through to the PyPI wheel.
+> torchaudio = [

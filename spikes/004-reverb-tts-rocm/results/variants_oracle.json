@@ -1,0 +1,58 @@
+{
+ "short_seed100": {
+  "wer": 0.167,
+  "edits": 2,
+  "words": 12,
+  "transcribed": "Hello from an AMD graphics processor. This voice was cloned on Aero Team.",
+  "audio_seconds": 4.4
+ },
+ "short_seed101": {
+  "wer": 0.083,
+  "edits": 1,
+  "words": 12,
+  "transcribed": "Hello from an AMD graphics processor. This voice was cloned on Aeroteam.",
+  "audio_seconds": 4.4
+ },
+ "short_seed102": {
+  "wer": 0.083,
+  "edits": 1,
+  "words": 12,
+  "transcribed": "Hello from an AMD graphics processor. This voice was cloned on Aerotem.",
+  "audio_seconds": 4.4
+ },
+ "short_seed103": {
+  "wer": 0.167,
+  "edits": 2,
+  "words": 12,
+  "transcribed": "Hello from an AMD graphics processor. This voice was cloned on Error Team.",
+  "audio_seconds": 4.4
+ },
+ "contextual_seed100": {
+  "wer": 0.118,
+  "edits": 2,
+  "words": 17,
+  "transcribed": "Hello from an AMD graphics processor, this voice was cloned on Aerotim, AMD's Aerotim Compute Stack.",
+  "audio_seconds": 6.12
+ },
+ "contextual_seed101": {
+  "wer": 0.118,
+  "edits": 2,
+  "words": 17,
+  "transcribed": "Hello from an AMD graphics processor, this voice was cloned on Rootsim, AMD's Rootsim Compute Stack.",
+  "audio_seconds": 6.12
+ },
+ "short_fp32": {
+  "wer": 0.167,
+  "edits": 2,
+  "words": 12,
+  "transcribed": "Hello from an AMD graphics processor. This voice was cloned on Aero Team.",
+  "audio_seconds": 4.4
+ },
+ "contextual_fp32": {
+  "wer": 0.118,
+  "edits": 2,
+  "words": 17,
+  "transcribed": "Hello from an AMD graphics processor. This voice was cloned on AeroSim, AMD's AeroSim Compute Stack.",
+  "audio_seconds": 6.12
+ }
+}

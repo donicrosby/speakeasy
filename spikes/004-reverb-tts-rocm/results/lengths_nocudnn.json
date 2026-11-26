@@ -1,0 +1,60 @@
+{
+ "w5": {
+  "words": 5,
+  "seconds": 1.6,
+  "elapsed_s": [
+   0.161,
+   0.157,
+   0.161
+  ]
+ },
+ "w12a": {
+  "words": 12,
+  "seconds": 4.4,
+  "elapsed_s": [
+   0.21,
+   0.207,
+   0.206
+  ]
+ },
+ "w25": {
+  "words": 26,
+  "seconds": 8.94,
+  "elapsed_s": [
+   0.34,
+   0.319,
+   0.317
+  ]
+ },
+ "w40": {
+  "words": 40,
+  "seconds": 17.38,
+  "elapsed_s": [
+   0.587,
+   0.58,
+   0.569
+  ]
+ },
+ "w60": {
+  "words": 58,
+  "seconds": 23.32,
+  "elapsed_s": [
+   0.737,
+   0.746,
+   0.742
+  ]
+ },
+ "w12b": {
+  "words": 12,
+  "seconds": 4.6,
+  "elapsed_s": [
+   0.203,
+   0.202,
+   0.203
+  ]
+ },
+ "codec_decode_s": {
+  "decode_new_shape": 0.281,
+  "decode_same_shape": 0.212
+ }
+}

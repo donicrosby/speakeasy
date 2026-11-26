@@ -1,0 +1,172 @@
+{
+ "torch": "2.14.0+rocm10.1.0",
+ "hip": "7.16.26385",
+ "transformers": "5.19.0",
+ "reverb_tts": "1.0.1",
+ "torchaudio": "2.11.1+rocm10.1.0",
+ "device_name": "AMD Radeon 8060S Graphics",
+ "gcnArchName": "gfx1151",
+ "sdpa_mask_probe": {
+  "FLASH_ATTENTION": {
+   "error": "RuntimeError: No available kernel. Aborting execution."
+  },
+  "EFFICIENT_ATTENTION": {
+   "finite": true,
+   "max_abs_diff_vs_first": 0.0
+  },
+  "MATH": {
+   "finite": true,
+   "max_abs_diff_vs_first": 0.01562
+  },
+  "CUDNN_ATTENTION": {
+   "error": "RuntimeError: No available kernel. Aborting execution."
+  },
+  "OVERRIDEABLE": {
+   "error": "RuntimeError: No viable backend for scaled_dot_product_attention was found. This is likely due to turning off both the math kernel and"
+  },
+  "default_dispatch": {
+   "finite": true,
+   "max_abs_diff_vs_first": 0.0
+  }
+ },
+ "load_seconds": 101.9,
+ "device": "cuda:0",
+ "network_dtype": "torch.bfloat16",
+ "codec_dtype": "torch.float32",
+ "sample_rate": 24000,
+ "gpu_mem_after_load_mb": 1430,
+ "presets": [
+  "de_female_standard",
+  "de_male_standard",
+  "en_female_narrator",
+  "en_female_whisper",
+  "en_male_angry",
+  "en_male_narrator_1",
+  "en_male_narrator_2",
+  "es_male_standard_1",
+  "es_male_standard_2",
+  "fr_female_standard",
+  "fr_male_standard",
+  "it_male_expressive",
+  "it_male_standard",
+  "pl_male_standard",
+  "pt_female_standard",
+  "pt_male_standard"
+ ],
+ "preset_generate": {
+  "elapsed_s": 9.68,
+  "seconds": 5.63,
+  "finite": true,
+  "peak": 0.61,
+  "rms_dbfs": -20.0
+ },
+ "voice_encode": {
+  "elapsed_s": 7.77,
+  "reference_seconds": 5.64,
+  "speech_frames": 141,
+  "codes_shape": [
+   8,
+   141
+  ],
+  "npz_bytes": 3622
+ },
+ "runs": {
+  "short": {
+   "words": 12,
+   "takes": [
+    {
+     "elapsed_s": 0.476,
+     "seconds": 4.4,
+     "finite": true,
+     "peak": 0.627,
+     "rms_dbfs": -19.6
+    },
+    {
+     "elapsed_s": 0.476,
+     "seconds": 4.4,
+     "finite": true,
+     "peak": 0.627,
+     "rms_dbfs": -19.7
+    },
+    {
+     "elapsed_s": 0.476,
+     "seconds": 4.4,
+     "finite": true,
+     "peak": 0.564,
+     "rms_dbfs": -19.5
+    }
+   ],
+   "x_real_time": 9.2,
+   "rtf": 0.108
+  },
+  "medium": {
+   "words": 40,
+   "takes": [
+    {
+     "elapsed_s": 1.567,
+     "seconds": 17.19,
+     "finite": true,
+     "peak": 0.553,
+     "rms_dbfs": -20.5
+    },
+    {
+     "elapsed_s": 1.569,
+     "seconds": 17.26,
+     "finite": true,
+     "peak": 0.639,
+     "rms_dbfs": -20.3
+    },
+    {
+     "elapsed_s": 1.583,
+     "seconds": 17.35,
+     "finite": true,
+     "peak": 0.593,
+     "rms_dbfs": -20.5
+    }
+   ],
+   "x_real_time": 11.0,
+   "rtf": 0.091
+  },
+  "long": {
+   "words": 133,
+   "takes": [
+    {
+     "elapsed_s": 4.709,
+     "seconds": 49.94,
+     "finite": true,
+     "peak": 0.632,
+     "rms_dbfs": -20.6
+    },
+    {
+     "elapsed_s": 4.714,
+     "seconds": 50.0,
+     "finite": true,
+     "peak": 0.683,
+     "rms_dbfs": -20.5
+    },
+    {
+     "elapsed_s": 4.699,
+     "seconds": 49.93,
+     "finite": true,
+     "peak": 0.636,
+     "rms_dbfs": -20.5
+    }
+   ],
+   "x_real_time": 10.6,
+   "rtf": 0.094
+  }
+ },
+ "batch4": {
+  "elapsed_s": 6.013,
+  "audio_seconds": 69.37,
+  "x_real_time": 11.5
+ },
+ "polish": {
+  "seconds": 2.8,
+  "finite": true,
+  "peak": 0.607,
+  "rms_dbfs": -19.3
+ },
+ "seed_reproducible": true,
+ "gpu_mem_peak_mb": 1984
+}
