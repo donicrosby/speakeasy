@@ -11,6 +11,10 @@
 # torch's CUDA triton dependency resolves from PyPI (unpinned); only torch
 # itself is index-routed to cu130.
 #
+# TTS ships in the default build: the tts extra (reverb-tts + torchaudio)
+# rides on top of cu130. torchaudio resolves from PyPI here, because the
+# cu130 index publishes it only up to 2.11.0 and without a cp312 build.
+#
 # Build:  docker build -f Dockerfile.cuda -t speakeasy:cuda .
 # Run:    docker run --gpus all -p 8080:8080 speakeasy:cuda
 
@@ -28,19 +32,21 @@ ENV PYTHONUNBUFFERED=1 \
 
 WORKDIR /app
 
-# Locked dependency tree, CUDA variant. Torch comes from the cu130 index via
-# the extra; everything else from PyPI.
+# Locked dependency tree, CUDA variant + TTS. Torch comes from the cu130 index
+# via the extra; everything else from PyPI.
 COPY pyproject.toml uv.lock README.md ./
 RUN --mount=type=cache,target=/root/.cache/uv \
-    uv sync --frozen --no-dev --no-install-project --extra cu130
+    uv sync --frozen --no-dev --no-install-project --extra cu130 --extra tts
 
 COPY src/ src/
 # Install the project itself (no deps to repeat — the first sync covered them).
 RUN --mount=type=cache,sharing=locked,target=/root/.cache/uv \
-    uv sync --frozen --no-dev --extra cu130
+    uv sync --frozen --no-dev --extra cu130 --extra tts
 
-# Sanity: the torch in the venv must be a CUDA build.
-RUN /app/.venv/bin/python -c "import torch; assert torch.cuda.is_available() or torch.version.cuda is not None, 'torch is not a CUDA build'; print('torch', torch.__version__, 'cuda', torch.version.cuda)"
+# Sanity: the torch in the venv must be a CUDA build, and the TTS stack must
+# load against it (torchaudio's compiled ops + reverb-tts). No GPU at build
+# time, so the resample runs on CPU.
+RUN /app/.venv/bin/python -c "import torch, torchaudio, reverb_tts; assert torch.cuda.is_available() or torch.version.cuda is not None, 'torch is not a CUDA build'; y = torchaudio.functional.resample(torch.zeros(1, 24000), 24000, 16000); assert y.shape[-1] == 16000, 'torchaudio resample is broken'; print('torch', torch.__version__, 'cuda', torch.version.cuda, '| torchaudio', torchaudio.__version__, '| reverb-tts', reverb_tts.__version__)"
 
 VOLUME /models
 
