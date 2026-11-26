@@ -43,7 +43,9 @@ class TranscriptionResult:
 
 
 class WhisperEngine:
-    def __init__(self, model_name: str, device: str, compute_type: str, beam_size: int = 5):
+    def __init__(
+        self, model_name: str, device: str, compute_type: str, beam_size: int = 5
+    ):
         from faster_whisper import WhisperModel
 
         t0 = time.monotonic()
@@ -118,7 +120,9 @@ class MoonshineEngine:
         if sr != 16000:
             from scipy import signal as scipy_signal
 
-            audio = scipy_signal.resample(audio, int(len(audio) * 16000 / sr)).astype(np.float32)
+            audio = scipy_signal.resample(audio, int(len(audio) * 16000 / sr)).astype(
+                np.float32
+            )
 
         duration = len(audio) / 16000
 

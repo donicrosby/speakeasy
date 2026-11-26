@@ -4,7 +4,6 @@ Validates: given faster-whisper, when we expose /v1/audio/transcriptions,
 then it matches the OpenAI API contract closely enough for existing clients.
 """
 
-import io
 import os
 import tempfile
 import time
@@ -31,7 +30,9 @@ async def lifespan(app: FastAPI):
     global model
     t0 = time.monotonic()
     model = WhisperModel(MODEL_NAME, device=DEVICE, compute_type=COMPUTE_TYPE)
-    print(f"Model loaded in {time.monotonic() - t0:.1f}s ({MODEL_NAME}, {DEVICE}/{COMPUTE_TYPE})")
+    print(
+        f"Model loaded in {time.monotonic() - t0:.1f}s ({MODEL_NAME}, {DEVICE}/{COMPUTE_TYPE})"
+    )
     yield
     model = None
 
@@ -42,6 +43,7 @@ app = FastAPI(title="speakeasy", version="0.1.0", lifespan=lifespan)
 # ---------------------------------------------------------------------------
 # OpenAI-compatible response shapes
 # ---------------------------------------------------------------------------
+
 
 def _format_timestamp(seconds: float) -> str:
     """Convert seconds to HH:MM:SS,mmm format."""
@@ -100,6 +102,7 @@ def _to_vtt(segments: list) -> str:
 # ---------------------------------------------------------------------------
 # Endpoints
 # ---------------------------------------------------------------------------
+
 
 @app.get("/v1/models")
 async def list_models():
@@ -165,7 +168,9 @@ async def transcribe(
     else:
         return JSONResponse(
             status_code=400,
-            content={"error": {"message": f"Unsupported response_format: {response_format}"}},
+            content={
+                "error": {"message": f"Unsupported response_format: {response_format}"}
+            },
         )
 
 

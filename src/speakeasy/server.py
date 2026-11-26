@@ -14,8 +14,18 @@ import os
 import tempfile
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI, File, Form, Query, UploadFile
+from fastapi import (
+    Depends,
+    FastAPI,
+    File,
+    Form,
+    HTTPException,
+    Query,
+    Security,
+    UploadFile,
+)
 from fastapi.responses import JSONResponse, Response
+from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 
 from .config import Settings, resolve_device_compute
 from .engines import MoonshineEngine, WhisperEngine, probe_duration
@@ -24,6 +34,20 @@ from .responses import FORMATS
 log = logging.getLogger("speakeasy")
 
 settings = Settings()
+
+_bearer = HTTPBearer(auto_error=False)
+
+
+def require_auth(
+    creds: HTTPAuthorizationCredentials | None = Security(_bearer),
+) -> None:
+    """Reject requests when SPEAKEASY_API_KEY is set and the token doesn't match."""
+    if not settings.api_key:
+        return  # auth disabled
+    if creds is None or creds.credentials != settings.api_key:
+        raise HTTPException(status_code=401, detail="Invalid or missing API key")
+
+
 if settings.hf_home:
     os.environ["HF_HOME"] = settings.hf_home
 
@@ -42,8 +66,12 @@ async def lifespan(app: FastAPI):
     log.info("device=%s compute=%s", device, compute)
 
     try:
-        whisper = WhisperEngine(settings.whisper_model, device, compute, settings.beam_size)
-        log.info("whisper loaded in %.1fs (%s)", whisper.load_seconds, settings.whisper_model)
+        whisper = WhisperEngine(
+            settings.whisper_model, device, compute, settings.beam_size
+        )
+        log.info(
+            "whisper loaded in %.1fs (%s)", whisper.load_seconds, settings.whisper_model
+        )
     except Exception as e:
         startup_error = f"whisper failed to load: {e}"
         log.exception(startup_error)
@@ -51,7 +79,11 @@ async def lifespan(app: FastAPI):
     if settings.moonshine_enabled:
         try:
             moonshine = MoonshineEngine(settings.moonshine_model)
-            log.info("moonshine loaded in %.1fs (%s)", moonshine.load_seconds, settings.moonshine_model)
+            log.info(
+                "moonshine loaded in %.1fs (%s)",
+                moonshine.load_seconds,
+                settings.moonshine_model,
+            )
         except Exception as e:
             # Fast path is optional — log and continue
             log.warning("moonshine failed to load, fast path disabled: %s", e)
@@ -71,7 +103,9 @@ async def health():
 @app.get("/health/ready")
 async def ready():
     if startup_error:
-        return JSONResponse(status_code=503, content={"status": "error", "detail": startup_error})
+        return JSONResponse(
+            status_code=503, content={"status": "error", "detail": startup_error}
+        )
     if whisper is None:
         return JSONResponse(status_code=503, content={"status": "loading"})
     return {
@@ -81,7 +115,7 @@ async def ready():
     }
 
 
-@app.get("/v1/models")
+@app.get("/v1/models", dependencies=[Depends(require_auth)])
 async def list_models():
     return {
         "object": "list",
@@ -101,24 +135,35 @@ def _model_ids() -> list[str]:
     return ids
 
 
-@app.post("/v1/audio/transcriptions")
+@app.post("/v1/audio/transcriptions", dependencies=[Depends(require_auth)])
 async def transcribe(
     file: UploadFile = File(...),
     model: str = Form(default=""),
     language: str | None = Form(default=None),
     response_format: str = Form(default="json"),
     temperature: float = Form(default=0.0),
-    fast: bool = Query(default=False, description="Force Moonshine fast path (short English audio)"),
+    fast: bool = Query(
+        default=False, description="Force Moonshine fast path (short English audio)"
+    ),
     vad: bool = Query(default=True, description="Silero VAD filter (whisper only)"),
-    word_timestamps: bool = Query(default=False, description="Word-level timestamps (whisper only)"),
+    word_timestamps: bool = Query(
+        default=False, description="Word-level timestamps (whisper only)"
+    ),
 ):
     if whisper is None:
-        return JSONResponse(status_code=503, content={"error": {"message": startup_error or "models not loaded"}})
+        return JSONResponse(
+            status_code=503,
+            content={"error": {"message": startup_error or "models not loaded"}},
+        )
 
     if response_format not in FORMATS:
         return JSONResponse(
             status_code=400,
-            content={"error": {"message": f"Unsupported response_format '{response_format}'. Supported: {', '.join(FORMATS)}"}},
+            content={
+                "error": {
+                    "message": f"Unsupported response_format '{response_format}'. Supported: {', '.join(FORMATS)}"
+                }
+            },
         )
 
     audio_bytes = await file.read()
@@ -165,7 +210,20 @@ async def transcribe(
     headers = {
         "X-Speakeasy-Engine": result.engine,
         "X-Speakeasy-Elapsed": str(result.elapsed_seconds),
+        "X-Speakeasy-Duration": str(result.duration),
+        "X-Speakeasy-RTF": str(
+            round(result.elapsed_seconds / max(result.duration, 0.01), 3)
+        ),
     }
+
+    log.info(
+        "%s engine=%s duration=%.2fs elapsed=%.3fs rtf=%.3f",
+        "transcribe",
+        result.engine,
+        result.duration,
+        result.elapsed_seconds,
+        result.elapsed_seconds / max(result.duration, 0.01),
+    )
 
     if isinstance(body, dict):
         return JSONResponse(content=body, headers=headers)
@@ -175,8 +233,10 @@ async def transcribe(
 def main():
     import uvicorn
 
-    logging.basicConfig(level=logging.INFO, format="%(asctime)s %(name)s %(levelname)s %(message)s")
-    uvicorn.run("speakeasy.server:app", host=settings.host, port=settings.port)
+    logging.basicConfig(
+        level=logging.INFO, format="%(asctime)s %(name)s %(levelname)s %(message)s"
+    )
+    uvicorn.run("speakeasy.server:app", host=settings.bind, port=settings.port)
 
 
 if __name__ == "__main__":
