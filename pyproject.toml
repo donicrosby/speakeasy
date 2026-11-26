@@ -8,7 +8,7 @@ requires-python = ">=3.12"
 dependencies = [
     "fastapi>=0.143.0",
     "faster-whisper>=1.2.1",
-    "av<19",
+    "av>=18.1.1,<19",
     "uvicorn>=0.54.0",
     "python-multipart>=0.0.32",
     "pydantic-settings>=2.15.0",
@@ -30,6 +30,9 @@ dependencies = [
 #   uv sync --extra rocm    # AMD ROCm 7.2 fallback (download.pytorch.org/whl/rocm7.2)
 #   uv sync --extra rocm101 # AMD ROCm 10.1 (stable.repo.amd.com/rocm/whl-next)
 #
+# The tts extra (Reverb TTS dependencies) combines with any accelerator extra:
+#   uv sync --extra rocm101 --extra tts
+#
 # The extras are declared conflicting so they can never coexist in one env.
 # NOTE: `torch` intentionally lives in the EXTRAS, not base dependencies —
 # base deps stay accelerator-agnostic (dev on macOS, CPU CI, tests).
@@ -37,6 +40,9 @@ dependencies = [
 [project.optional-dependencies]
 cpu = [
     "torch>=2.5",
+    # Declared so tool.uv.sources can route it to the CPU index: the tts extra
+    # (reverb-tts) needs torchaudio, and the PyPI wheel is the CUDA build.
+    "torchaudio>=2.11",
 ]
 cu130 = [
     "torch>=2.5",
@@ -52,6 +58,10 @@ rocm = [
     # Declared so tool.uv.sources can scope it to the pytorch-rocm index;
     # torch>=2.14 rocm wheels require triton-rocm>=3.8 at resolve time.
     "triton-rocm>=3.6.0; sys_platform == 'linux'",
+    # The tts extra needs torchaudio, and the PyPI wheel is the CUDA build
+    # (links libcudart and libtorch_cuda), so it cannot load against HIP
+    # torch. Pinned to the one rocm7.2 build the index publishes.
+    "torchaudio==2.11.0+rocm7.2; sys_platform == 'linux'",
 ]
 # ROCm 10.1 via AMD's own pip ecosystem (stable.repo.amd.com/rocm/whl-next).
 # AMD productized the whole runtime as wheels: torch pulls rocm[libraries],
@@ -75,6 +85,20 @@ rocm101 = [
     # amd-torch-device-gfx1151 -> rocm-sdk-device-gfx1151 (the HIP kernels).
     "rocm-sdk-device-gfx1151>=10.1.0; sys_platform == 'linux'",
     "rocm-bootstrap; sys_platform == 'linux'",
+    # Declared here as well as in `tts`: the torchaudio source entry is scoped
+    # to this extra, and uv requires a routed package to sit in that extra.
+    # Pinned to the rocm10.1.0 build: AMD's index also lists 2.11.1+rocm10.2.0,
+    # which sorts higher and would otherwise be picked against the 10.1 runtime.
+    "torchaudio==2.11.1+rocm10.1.0; sys_platform == 'linux'",
+]
+# TTS (Reverb voice cloning): the dependencies of the TTS engine. Not in the
+# conflicting set, it combines with any accelerator extra.
+tts = [
+    "reverb-tts>=1.0.1,<2",
+    # reverb-tts resamples the reference clip with torchaudio (CPU side). Named
+    # so the extra lists everything it pulls in; the accelerator extras declare
+    # it too because a routed package must sit in the extra it is routed for.
+    "torchaudio>=2.11",
 ]
 
 [tool.ruff.lint]
@@ -139,6 +163,19 @@ triton-rocm = [
 # to the AMD index. NOT routed for cu130: PyPI serves the CUDA triton, and
 # declaring it under cu130 pollutes the universal-lock cpu split.
 triton = [
+    { index = "amd-rocm101", extra = "rocm101" },
+]
+# torchaudio (reverb-tts): each accelerator gets the build that links against
+# its torch. The CPU index has the +cpu build; AMD's index has
+# 2.11.1+rocm10.1.0 with a torch>=2.11 floor (pinned in the extra because
+# 2.11.1+rocm10.2.0 sorts higher); the rocm7.2 index has only 2.11.0+rocm7.2.
+# cu130 falls through to the PyPI wheel, which is the cu132 build: it links
+# libcudart.so.13 and loads against the cu130 torch (Dockerfile.cuda's sanity
+# step asserts it). The cu130 index itself carries torchaudio only up to
+# 2.11.0, and without a cp312 build.
+torchaudio = [
+    { index = "pytorch-cpu", extra = "cpu" },
+    { index = "pytorch-rocm", extra = "rocm" },
     { index = "amd-rocm101", extra = "rocm101" },
 ]
 # torch[device-gfx1151] -> amd-torch-device-gfx1151/-gfx115x kernel shims;

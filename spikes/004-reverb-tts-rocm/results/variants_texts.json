@@ -1,0 +1,34 @@
+{
+ "short_seed100": [
+  "Hello from an AMD graphics processor. This voice was cloned on ROCm.",
+  "en"
+ ],
+ "short_seed101": [
+  "Hello from an AMD graphics processor. This voice was cloned on ROCm.",
+  "en"
+ ],
+ "short_seed102": [
+  "Hello from an AMD graphics processor. This voice was cloned on ROCm.",
+  "en"
+ ],
+ "short_seed103": [
+  "Hello from an AMD graphics processor. This voice was cloned on ROCm.",
+  "en"
+ ],
+ "contextual_seed100": [
+  "Hello from an AMD graphics processor. This voice was cloned on ROCm, AMD's ROCm compute stack.",
+  "en"
+ ],
+ "contextual_seed101": [
+  "Hello from an AMD graphics processor. This voice was cloned on ROCm, AMD's ROCm compute stack.",
+  "en"
+ ],
+ "short_fp32": [
+  "Hello from an AMD graphics processor. This voice was cloned on ROCm.",
+  "en"
+ ],
+ "contextual_fp32": [
+  "Hello from an AMD graphics processor. This voice was cloned on ROCm, AMD's ROCm compute stack.",
+  "en"
+ ]
+}

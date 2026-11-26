@@ -1,0 +1,48 @@
+{
+ "reference": {
+  "expected": "The quick brown fox jumps over the lazy dog. Pack my box with five dozen liquor jugs.",
+  "transcribed": "The quick brown fox jumps over the lazy dog. Pack my box with five dozen liquor jugs.",
+  "ref_words": 17,
+  "edits": 0,
+  "wer": 0.0,
+  "whisper_elapsed_s": 4.74,
+  "audio_seconds": 5.63
+ },
+ "short": {
+  "expected": "Hello from an AMD graphics processor. This voice was cloned on ROCm.",
+  "transcribed": "Hello from an AMD graphics processor. This voice was cloned on Aero Team.",
+  "ref_words": 12,
+  "edits": 2,
+  "wer": 0.1667,
+  "whisper_elapsed_s": 4.63,
+  "audio_seconds": 4.4
+ },
+ "medium": {
+  "expected": "Speakeasy transcribes voice notes with Whisper and Moonshine. Tonight it learned to talk back. The model you are hearing is Reverb, a three hundred million parameter voice cloning system, running on the integrated graphics processor of a Strix Halo laptop.",
+  "transcribed": "Speakeasy transcribes voice notes with Whisper and Moonshine. Tonight it learned to talk back. The model you are hearing is Reverb, a 300 million parameter voice cloning system running on the integrated graphics processor of a Strix Halo laptop.",
+  "ref_words": 40,
+  "edits": 2,
+  "wer": 0.05,
+  "whisper_elapsed_s": 5.29,
+  "audio_seconds": 17.19
+ },
+ "long": {
+  "expected": "Masked diffusion text to speech works nothing like the older autoregressive models. Instead of emitting one audio token at a time, the model lays out a grid of codec tokens for the whole utterance and fills it in over a handful of passes, deciding the coarse codebooks first and polishing the fine ones at the end. That is what makes it fast: every pass runs in parallel over the entire target, so the cost grows with the number of passes rather than the number of frames. Reverb was pruned down from a larger teacher with distillation, retrained on seven languages, and then tuned with preference optimization. The result fits in under a gigabyte, clones a voice from a few seconds of reference audio, and speaks faster than real time even on modest hardware.",
+  "transcribed": "Masked diffusion text-to-speech works nothing like the older autoregressive models. Instead of emitting one audio token at a time, the model lays out a grid of codec tokens for the whole utterance and fills it in over a handful of passes, deciding the coarse codebooks first and polishing the fine ones at the end. That is what makes it fast. Every pass runs in parallel over the entire target, so the cost grows with the number of passes rather than the number of frames. Reverb was pruned down from a larger teacher with distillation, retrained on seven languages, and then tuned with preference optimisation. The result fits in under a gigabyte, clones a voice from a few seconds of reference audio, and speaks faster than real-time even on modest hardware.",
+  "ref_words": 133,
+  "edits": 1,
+  "wer": 0.0075,
+  "whisper_elapsed_s": 11.6,
+  "audio_seconds": 49.94
+ },
+ "polish": {
+  "expected": "Dzień dobry, jak się masz? Miło mi cię poznać.",
+  "transcribed": "Dzień dobry, jak się masz? Miło mi Cię poznać.",
+  "ref_words": 9,
+  "edits": 0,
+  "wer": 0.0,
+  "whisper_elapsed_s": 4.41,
+  "audio_seconds": 2.8
+ },
+ "aggregate_wer": 0.0237
+}

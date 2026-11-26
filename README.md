@@ -120,7 +120,7 @@ All settings are environment variables with the `SPEAKEASY_` prefix:
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `SPEAKEASY_PORT` | `8080` | Port to listen on |
-| `SPEAKEASY_HOST` | `0.0.0.0` | Bind address |
+| `SPEAKEASY_BIND` | `0.0.0.0` | Bind address |
 | `SPEAKEASY_WHISPER_MODEL` | `large-v3-turbo` | faster-whisper model name |
 | `SPEAKEASY_DEVICE` | `auto` | `auto`, `cuda`, or `cpu`. `cuda` covers both NVIDIA CUDA and AMD ROCm (CTranslate2's ROCm wheel is HIP-backed but exposes the `cuda` device API). `auto` probes for a GPU |
 | `SPEAKEASY_COMPUTE_TYPE` | `auto` | `auto`, `float16`, `int8`, or `int8_float16`. `auto` resolves to `float16` on GPU, `int8` on CPU |

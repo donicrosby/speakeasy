@@ -2,13 +2,14 @@
 
 Production container images for speakeasy, in two GPU flavors:
 
-| Variant | Dockerfile | Base image | GPU |
+| Variant | Dockerfile | Accelerator stack | GPU |
 |---|---|---|---|
-| CUDA | `Dockerfile.cuda` | `pytorch/pytorch:2.14.1-cuda13.0-cudnn9-runtime` | NVIDIA (via NVIDIA Container Toolkit) |
-| ROCm | `Dockerfile.rocm` | `rocm/pytorch:rocm7.2.4_ubuntu24.04_py3.12_pytorch_release_2.10.0` | AMD (gfx1151/Strix Halo and other ROCm 7.2-supported targets) |
+| CUDA | `Dockerfile.cuda` | torch from `download.pytorch.org/whl/cu130` (`cu130` extra) | NVIDIA (via NVIDIA Container Toolkit) |
+| ROCm | `Dockerfile.rocm` | ROCm 10.1 runtime as pip wheels (`rocm101` extra), CTranslate2 built from source (HIP) | AMD gfx1151 (Strix Halo) |
 
 Both images run the same server (`speakeasy` → OpenAI-compatible
-transcription API) on port **8080**. On first start the Whisper
+transcription API) on port **8080**, and both are built with the TTS stack
+(`--extra tts`: reverb-tts + torchaudio). On first start the Whisper
 (and optionally Moonshine) models are downloaded into the Hugging Face
 cache; mount a volume at `/models` to avoid re-downloading.
 
@@ -31,35 +32,24 @@ docker build -f Dockerfile.cuda -t speakeasy:cuda .
 docker build -f Dockerfile.rocm -t speakeasy:rocm .
 ```
 
-The two builds are symmetric: each uses the official PyTorch container for
-its GPU vendor as the base (`pytorch/pytorch` for CUDA, `rocm/pytorch` for
-ROCm) and installs the locked dependency tree with `uv sync --frozen
---no-dev`, skipping the GPU stack with `--no-install-package` so the base
-image's torch is the single source of truth.
+Both builds start from `python:3.12-slim` and install the locked dependency
+tree with `uv sync --frozen --no-dev --extra <accelerator> --extra tts`. The
+GPU stacks come from pip, selected by the conflicting extras in
+`pyproject.toml` (one universal `uv.lock`):
 
-1. **torch comes from the base image (both variants).** The locked
-   dependency tree would otherwise pull the default PyPI torch plus ~7 GB
-   of `nvidia-*` CUDA wheels — duplicate weight, and wrong on AMD. On the
-   CUDA base, torch (`2.14.1+cu130`) lives in the system environment and
-   the app is synced into a project venv created with
-   `--system-site-packages`; on the ROCm base, torch
-   (`2.10.0+rocm7.2.4`, HIP) lives in `/opt/venv` itself, so the app is
-   synced directly into `/opt/venv` (`UV_PROJECT_ENVIRONMENT`). The skip
-   list (torch, triton, every `nvidia-*`/`cuda-*` package in uv.lock) must
-   be repeated on every `uv sync` — without it a later sync would
-   reinstall torch from PyPI. If the lockfile gains another
-   `nvidia-*`/`cuda-*` package, add it to the skip list in both
-   Dockerfiles.
-2. **ctranslate2.** CUDA: the default PyPI wheel is correct — its CUDA
-   variant bundles the kernels it needs on top of the base image's CUDA
-   stack. ROCm: the PyPI wheel is CUDA-only, so the build skips it at sync
-   time and installs the official CTranslate2 v4.7.1 ROCm wheel
-   (`rocm-python-wheels-Linux.zip` from the CTranslate2 GitHub release,
-   cp312 manylinux x86_64) instead. The wheel is HIP-backed but still uses
-   `device="cuda"` internally — no code changes needed. The ROCm base
-   image provides the HIP/rocBLAS/MIOpen shared libraries it links
-   against; ROCm 7.2.x supports gfx1151 (Strix Halo) natively, so no
-   `HSA_OVERRIDE_GFX_VERSION` workaround is required.
+1. **CUDA.** torch and its `nvidia-*` wheels come from the cu130 index;
+   ctranslate2 stays on the PyPI wheel, which bundles its CUDA kernels.
+2. **ROCm 10.1.** torch and the whole ROCm 10.1 user-space runtime (rocBLAS,
+   MIOpen, the gfx1151 kernel shims) come from AMD's wheel index
+   (`stable.repo.amd.com/rocm/whl-next`) — no apt ROCm packages in the
+   runtime image. ctranslate2's PyPI wheel is CUDA-only, so a builder stage
+   (Ubuntu 24.04 + the ROCm 10.1 SDK from AMD's apt repo) compiles
+   CTranslate2 with the HIP backend for gfx1151, and the runtime image swaps
+   that wheel in for the locked PyPI one *after* its last `uv sync`.
+
+Each build ends with a sanity step that imports the stack and asserts the
+right builds are present: HIP torch and the HIP source-built ctranslate2 on
+ROCm, CUDA torch on CUDA, and the torchaudio/reverb-tts imports on both.
 
 ## Running
 
@@ -100,12 +90,12 @@ docker compose up cuda    # or: docker compose up rocm
 
 All settings use the `SPEAKEASY_` prefix. Defaults shown are the
 application defaults; the Dockerfiles additionally set
-`SPEAKEASY_HF_HOME=/models`, `SPEAKEASY_HOST=0.0.0.0`, `SPEAKEASY_PORT=8080`.
+`SPEAKEASY_HF_HOME=/models`, `SPEAKEASY_BIND=0.0.0.0`, `SPEAKEASY_PORT=8080`.
 
 | Variable | Default | Description |
 |---|---|---|
 | `SPEAKEASY_PORT` | `8080` | Listen port |
-| `SPEAKEASY_HOST` | `0.0.0.0` | Listen address |
+| `SPEAKEASY_BIND` | `0.0.0.0` | Bind address |
 | `SPEAKEASY_WHISPER_MODEL` | `large-v3-turbo` | faster-whisper model id (Hugging Face or CTranslate2 name) |
 | `SPEAKEASY_DEVICE` | `auto` | `auto` \| `cuda` \| `cpu` (use `cuda` for **both** NVIDIA and ROCm) |
 | `SPEAKEASY_COMPUTE_TYPE` | `auto` | `auto` \| `float16` \| `int8` \| `int8_float16` |

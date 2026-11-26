@@ -116,28 +116,28 @@ wheels = [
 
 [[package]]
 name = "av"
-version = "18.1.0"
+version = "18.1.1"
 source = { registry = "https://pypi.org/simple" }
-sdist = { url = "https://files.pythonhosted.org/packages/8d/f4/f22114d30d3435e38c6af2b4870f37b864403dca6ae7af747a289ce0a18e/av-18.1.0.tar.gz", hash = "sha256:47bfc286e1bc9de7ab4681fc2b575cd2460a66919d31ffe1bd5aa54fae531a28", size = 4451061, upload-time = "2026-08-12T22:28:18.761Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/d8/d0/879cbd987c085e3c0d45e1bb2e30445f8f5d9265603e3580c71c28687002/av-18.1.1.tar.gz", hash = "sha256:2e364c39521e10a1599c3cffad3f1039999fe727f56bd8545746beb311a060a2", size = 4641914, upload-time = "2026-11-21T05:07:51.534Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/05/d4/d7cdc8bff143c17a6d35924375ae28dd692cacde38700a7d419fde54f44a/av-18.1.0-cp311-abi3-macosx_11_0_x86_64.whl", hash = "sha256:ae75d8bb6467895ed1f8572ededf7ffa49eac07f6e483222f5d7d62a41d12f04", size = 22546147, upload-time = "2026-08-12T22:27:11.851Z" },
-    { url = "https://files.pythonhosted.org/packages/3f/c9/37a619297492256b77d5ed906e7d8166c10a26ed251dccf1ae03ab19bff6/av-18.1.0-cp311-abi3-macosx_14_0_arm64.whl", hash = "sha256:b30a4e8d934558e19602b68998a4d9ac9f250fa0dacef216f7e8e40153b13316", size = 18217603, upload-time = "2026-08-12T22:27:14.713Z" },
-    { url = "https://files.pythonhosted.org/packages/d9/84/2464ffb64c08c5ce8b522c8e74594714414e3b0575267652c5c51c0574b9/av-18.1.0-cp311-abi3-manylinux_2_28_aarch64.whl", hash = "sha256:6fc837cc51adf80331ac850779cd53b5d4c4460b0ebe9057a02a921c6736f19d", size = 33640142, upload-time = "2026-08-12T22:27:17.835Z" },
-    { url = "https://files.pythonhosted.org/packages/27/3a/204dbfc3e08eb4cdc6e6ff57be02150bc44523ebdb50182d10025792ebd9/av-18.1.0-cp311-abi3-manylinux_2_28_x86_64.whl", hash = "sha256:8a032e8d8ebc73dec079364b9b4a6837638a2d106e8472314e685ffbf163e700", size = 35786210, upload-time = "2026-08-12T22:27:20.984Z" },
-    { url = "https://files.pythonhosted.org/packages/e1/99/b0d04ec553ff9a7e00455458dfa3a39c8a8f627b273056b4e5fe57d590de/av-18.1.0-cp311-abi3-manylinux_2_31_armv7l.whl", hash = "sha256:3c8b1f8b46f99d52e2d8b0ed5d0cdadf172d24794d46e2077b16e44ed08e26ff", size = 39379798, upload-time = "2026-08-12T22:27:24.432Z" },
-    { url = "https://files.pythonhosted.org/packages/56/b1/e00d4feae59160149df6126585e726fdc6300798fd40c5dd324879e81f68/av-18.1.0-cp311-abi3-musllinux_1_2_aarch64.whl", hash = "sha256:ab5ac081bc9eaf54109120d4e56284674fecfbe520d9aa1707c7fa911ec5f4d2", size = 34690321, upload-time = "2026-08-12T22:27:27.769Z" },
-    { url = "https://files.pythonhosted.org/packages/dc/94/836fa987e3084d11a21489f11357fb24843ef3aa8faf74ddddfc603d5062/av-18.1.0-cp311-abi3-musllinux_1_2_x86_64.whl", hash = "sha256:191224788d87af06c31784a395bb73f14b72f33d7f4871ace0157de2abdc6276", size = 36859932, upload-time = "2026-08-12T22:27:31.403Z" },
-    { url = "https://files.pythonhosted.org/packages/33/b4/76ba21e46704f632004276b85289a1582e95f5eff760436d6149875a1881/av-18.1.0-cp311-abi3-win_amd64.whl", hash = "sha256:ea1480b7a8d5405cb5f382b344731bf125fd2c1c6fae3964f6c48595628387ff", size = 27595679, upload-time = "2026-08-12T22:27:35.177Z" },
-    { url = "https://files.pythonhosted.org/packages/4f/ad/a3135884c5753b09773176b97201ae602f67ad14206c395ff838d66bf9b0/av-18.1.0-cp311-abi3-win_arm64.whl", hash = "sha256:5509ec12aaa19fd6601de13cfa6f4cdad450da07982118510592875d970454d6", size = 20257584, upload-time = "2026-08-12T22:27:38.472Z" },
-    { url = "https://files.pythonhosted.org/packages/4f/5b/4a756265d7fb164336c8d377bca21c39cfa2c178be23cedee840a69b59c5/av-18.1.0-cp314-cp314t-macosx_11_0_x86_64.whl", hash = "sha256:b36b0bae9e4c62f9487c99481ec15e4e3870fcc868522cd6d18fc2d6bfa04f01", size = 22795654, upload-time = "2026-08-12T22:27:42.016Z" },
-    { url = "https://files.pythonhosted.org/packages/d5/cc/1bc841462114a1adf4f7d87456ab78a6972e23271e71865fcd2bbd0e7360/av-18.1.0-cp314-cp314t-macosx_14_0_arm64.whl", hash = "sha256:025f84494cb23278498f03b0d8117d3e47a1cbc9c44b97eb31875cf02251e46b", size = 18435735, upload-time = "2026-08-12T22:27:45.787Z" },
-    { url = "https://files.pythonhosted.org/packages/b8/20/005500ed17a2e62a5e4bb94aa3786942560ec2f55ec1895ebf174c87abef/av-18.1.0-cp314-cp314t-manylinux_2_28_aarch64.whl", hash = "sha256:08a9ae288299cfcbf739dba4ad0c53b9b71f45184303dd45947920d022fed695", size = 37090807, upload-time = "2026-08-12T22:27:50.14Z" },
-    { url = "https://files.pythonhosted.org/packages/5c/f7/11e7f6d848d3690c31ca4f8578167393e619177f1493ccc93b9400852d4e/av-18.1.0-cp314-cp314t-manylinux_2_28_x86_64.whl", hash = "sha256:cf8a17466bef07765dbdecc9e66ed9b25d20b4e14f654fbf35345a58ac45fa0c", size = 38976836, upload-time = "2026-08-12T22:27:54.565Z" },
-    { url = "https://files.pythonhosted.org/packages/c3/63/b271473b24e806062d31191e40c6d65545e9cf59f80f044eba56dcbba0f4/av-18.1.0-cp314-cp314t-manylinux_2_31_armv7l.whl", hash = "sha256:d49a5c542dfdc00f43c6cdb6cc41dac1781ee206fe180b56aa7433dfa816dfae", size = 40896630, upload-time = "2026-08-12T22:27:59.118Z" },
-    { url = "https://files.pythonhosted.org/packages/6b/9f/2ab7fa292a947ad3466ed8e655eefa3b82f535d7ea598c297b4471a937c4/av-18.1.0-cp314-cp314t-musllinux_1_2_aarch64.whl", hash = "sha256:5548b79e2bf1f59b3e9aedc918a72d9dc45b9adaac10ff9470d5dbdda0002e47", size = 37895673, upload-time = "2026-08-12T22:28:03.98Z" },
-    { url = "https://files.pythonhosted.org/packages/e9/d8/04507c57249b399c3e4f23f01d221532f357338b5316fd2858fbd343127d/av-18.1.0-cp314-cp314t-musllinux_1_2_x86_64.whl", hash = "sha256:e7ea063f6690193ea335a1d592d6e0274350d45e2ed6af83ee107cb90cbfd84f", size = 39992431, upload-time = "2026-08-12T22:28:08.736Z" },
-    { url = "https://files.pythonhosted.org/packages/d6/d6/bc4b95bea9c2353a7e4d62a3fcfad9adcf0f881741c6ce01ee179d539ce3/av-18.1.0-cp314-cp314t-win_amd64.whl", hash = "sha256:e4d48b9f12cad009cc72fe4f4099107de5e819c95f82767f4fd01a01481c0661", size = 28497798, upload-time = "2026-08-12T22:28:13.003Z" },
-    { url = "https://files.pythonhosted.org/packages/c1/d2/0c277a46f12647c1833f40496e132fb6001e0d19e6144b5ea30896461feb/av-18.1.0-cp314-cp314t-win_arm64.whl", hash = "sha256:5cd9085028902c9880622bd37a12fd4b33060f06a52311f6f4867ca9f29a2c3b", size = 21421979, upload-time = "2026-08-12T22:28:16.48Z" },
+    { url = "https://files.pythonhosted.org/packages/64/4e/796c8bc3d4be4e688dfcdda6381beb1989b85f8a9bcb5c3015c25ec7faea/av-18.1.1-cp311-abi3-macosx_11_0_x86_64.whl", hash = "sha256:976135ca19c2f4dbd7bb9a1021d778e96f31a4d6ca8bb8ac71b159cd3f2c56f7", size = 23105582, upload-time = "2026-11-21T05:06:50.479Z" },
+    { url = "https://files.pythonhosted.org/packages/8a/05/533b7f47d564d2936784bcf7baf693213ec6be8820a43c4a37060bd92639/av-18.1.1-cp311-abi3-macosx_14_0_arm64.whl", hash = "sha256:bf001d2390ac0f7d58b252109e130b2042da0bdcd887c0e41425b96dd9859f32", size = 19838966, upload-time = "2026-11-21T05:06:53.668Z" },
+    { url = "https://files.pythonhosted.org/packages/fd/1b/3dcc1588170bde80bb976b03daf40b2fb90e551de01818d0f8b19984ca1b/av-18.1.1-cp311-abi3-manylinux_2_28_aarch64.whl", hash = "sha256:86564224ad0029241181db8721093b8858d914ac0218cbe61c5575a172c4d80b", size = 34961431, upload-time = "2026-11-21T05:06:56.771Z" },
+    { url = "https://files.pythonhosted.org/packages/3c/9f/a189b28e331bbe2e97a6151258ef7dfeecf1e41ef409f336303dbed01c5c/av-18.1.1-cp311-abi3-manylinux_2_28_x86_64.whl", hash = "sha256:99c8f12ad952f86376b80e3d3dbb792d76036018d3e25233c34d5f225faf55e1", size = 36598715, upload-time = "2026-11-21T05:07:00.163Z" },
+    { url = "https://files.pythonhosted.org/packages/97/4d/29c0ef7c14f13d05e28cc44819932a0ad47ec8a3434d80e56d32a461320c/av-18.1.1-cp311-abi3-manylinux_2_31_armv7l.whl", hash = "sha256:22c93e65736010adcf0c0b59465702ee49b424dbfa0b6516773d2437f1774f5d", size = 36489063, upload-time = "2026-11-21T05:07:03.914Z" },
+    { url = "https://files.pythonhosted.org/packages/c1/fb/4ab0f053ad7cdb7e0e95cf09d1bbf543468bf1f7a903a7e972db3765a3f7/av-18.1.1-cp311-abi3-musllinux_1_2_aarch64.whl", hash = "sha256:113566c5e6e4b704816f2a435d43b5949ec8b73879c300c1c275a7877e7e5941", size = 36036006, upload-time = "2026-11-21T05:07:07.947Z" },
+    { url = "https://files.pythonhosted.org/packages/78/70/d36674dbdb4c67ff72cfc212aeec993cac723e0dbee9a4478ea61eab134b/av-18.1.1-cp311-abi3-musllinux_1_2_x86_64.whl", hash = "sha256:e3bddd6bb9873e87e9e9217e2ebc454700a67b0728368901620fc7ae86d601d7", size = 37644047, upload-time = "2026-11-21T05:07:11.369Z" },
+    { url = "https://files.pythonhosted.org/packages/a7/7a/0fbac30a189599d32a9cb8439b38b95521c091e041c3736d2a0c947c7f10/av-18.1.1-cp311-abi3-win_amd64.whl", hash = "sha256:2f93f859e0705abe2958889ef08699db44a3ff11964e1bbe2a6beb95a680e248", size = 28970805, upload-time = "2026-11-21T05:07:14.574Z" },
+    { url = "https://files.pythonhosted.org/packages/d4/6b/2f1bf1a1cbec92a855b981aa5faff8aae62a3a0416780d476a29f91742e1/av-18.1.1-cp311-abi3-win_arm64.whl", hash = "sha256:93eeef6535bdb7d25c4ebf5b603693cb4f47c653d281d48e4306e8bca507cd7b", size = 21624756, upload-time = "2026-11-21T05:07:17.813Z" },
+    { url = "https://files.pythonhosted.org/packages/12/a9/b7fb6578be267fc2bb568f44dc4654405f2a5d1e65578af3bf04c4f45e04/av-18.1.1-cp314-cp314t-macosx_11_0_x86_64.whl", hash = "sha256:3c6525453c7b574480c3542d578da76408efe94231e06d78dba120672d94be3f", size = 23423626, upload-time = "2026-11-21T05:07:20.711Z" },
+    { url = "https://files.pythonhosted.org/packages/a9/3d/72ec666aca127e6c712b81c87baf0380cb5a407bebe10f638374ce131ea9/av-18.1.1-cp314-cp314t-macosx_14_0_arm64.whl", hash = "sha256:8a9f58af80c04cac387dc9ae420807f1d053fb6b40e248334c8e45bcf7d2fdcd", size = 20120771, upload-time = "2026-11-21T05:07:23.544Z" },
+    { url = "https://files.pythonhosted.org/packages/f3/42/392def68cadcb1912efd6f2138e9847d8069e1c572bb9a6a8b821d1daa43/av-18.1.1-cp314-cp314t-manylinux_2_28_aarch64.whl", hash = "sha256:8a04b37ecb742a7a76cc188ad4db2f8534ca03c61ad9e3c6d84ce122be5c1496", size = 38796840, upload-time = "2026-11-21T05:07:27.793Z" },
+    { url = "https://files.pythonhosted.org/packages/fc/32/3046f5c34fd1ee74dea6b1d1dcf1c2b9136fb671ba9616cf015abc8545c2/av-18.1.1-cp314-cp314t-manylinux_2_28_x86_64.whl", hash = "sha256:a01e0867ea2663701cfc5d2d335745ab2089d10a3ef4bba5cbe12e27bd09cf4c", size = 40189116, upload-time = "2026-11-21T05:07:31.856Z" },
+    { url = "https://files.pythonhosted.org/packages/ae/1f/13252b295ee2b43f053bec1712cc93bb51ccd2201ae7b3ffdda29387551c/av-18.1.1-cp314-cp314t-manylinux_2_31_armv7l.whl", hash = "sha256:b0363a64359410d9ad359c2793b77f605837998b738ca531a6708efe31840395", size = 38307622, upload-time = "2026-11-21T05:07:35.71Z" },
+    { url = "https://files.pythonhosted.org/packages/97/31/f6cbb9b083ca39231d92950a5480780f64a9d8f692ec4a86ac86e7001fcd/av-18.1.1-cp314-cp314t-musllinux_1_2_aarch64.whl", hash = "sha256:41159fc3729e298c561a9832b6bf06415d6779d56b24705fc807955ecc5857d5", size = 39643812, upload-time = "2026-11-21T05:07:39.709Z" },
+    { url = "https://files.pythonhosted.org/packages/a0/a2/c90849af6ade4990da45e4ec414dc7c6c37491b588de014db9c2f7e416bd/av-18.1.1-cp314-cp314t-musllinux_1_2_x86_64.whl", hash = "sha256:16d0a9c9d75579bed9156319cd60dd447c4c56819bb6c1e0aa13ca232e317064", size = 41180379, upload-time = "2026-11-21T05:07:43.119Z" },
+    { url = "https://files.pythonhosted.org/packages/6f/5c/8d7eec9a49f7517eb7807dc3e23af19156e08a0e7260c4314591adfc26c2/av-18.1.1-cp314-cp314t-win_amd64.whl", hash = "sha256:e0b7d988e5013866426fb6ab5b06c7797f80d6e2c04ff72aaf71121e93d5a670", size = 29917616, upload-time = "2026-11-21T05:07:46.366Z" },
+    { url = "https://files.pythonhosted.org/packages/34/54/2f9316e24e2635e5dd6d0ae339cfad1d510dcac07cfe073e27e9b8d2c094/av-18.1.1-cp314-cp314t-win_arm64.whl", hash = "sha256:c3a3bb19b3d570fada856e58a67628436e0530d65f8668a45c8c22dfed699b7a", size = 22952361, upload-time = "2026-11-21T05:07:49.472Z" },
 ]
 
 [[package]]
@@ -1481,6 +1481,33 @@ wheels = [
 ]
 
 [[package]]
+name = "reverb-tts"
+version = "1.0.1"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "huggingface-hub" },
+    { name = "numpy" },
+    { name = "safetensors" },
+    { name = "soundfile" },
+    { name = "torch", version = "2.14.0+rocm10.1.0", source = { registry = "https://stable.repo.amd.com/rocm/whl-next/" }, marker = "extra == 'extra-9-speakeasy-rocm101' or (extra == 'extra-9-speakeasy-cpu' and extra == 'extra-9-speakeasy-cu130') or (extra == 'extra-9-speakeasy-cpu' and extra == 'extra-9-speakeasy-rocm') or (extra == 'extra-9-speakeasy-cu130' and extra == 'extra-9-speakeasy-rocm') or (extra != 'extra-9-speakeasy-cpu' and extra != 'extra-9-speakeasy-cu130' and extra != 'extra-9-speakeasy-rocm')" },
+    { name = "torch", version = "2.14.1", source = { registry = "https://download.pytorch.org/whl/cpu" }, marker = "(sys_platform == 'darwin' and extra == 'extra-9-speakeasy-cpu') or (extra == 'extra-9-speakeasy-cpu' and extra == 'extra-9-speakeasy-cu130') or (extra == 'extra-9-speakeasy-cpu' and extra == 'extra-9-speakeasy-rocm') or (extra == 'extra-9-speakeasy-cpu' and extra == 'extra-9-speakeasy-rocm101') or (extra == 'extra-9-speakeasy-cu130' and extra == 'extra-9-speakeasy-rocm') or (extra == 'extra-9-speakeasy-cu130' and extra == 'extra-9-speakeasy-rocm101') or (extra == 'extra-9-speakeasy-rocm' and extra == 'extra-9-speakeasy-rocm101')" },
+    { name = "torch", version = "2.14.1+cpu", source = { registry = "https://download.pytorch.org/whl/cpu" }, marker = "(sys_platform != 'darwin' and extra == 'extra-9-speakeasy-cpu') or (extra == 'extra-9-speakeasy-cpu' and extra == 'extra-9-speakeasy-cu130') or (extra == 'extra-9-speakeasy-cpu' and extra == 'extra-9-speakeasy-rocm') or (extra == 'extra-9-speakeasy-cpu' and extra == 'extra-9-speakeasy-rocm101') or (extra == 'extra-9-speakeasy-cu130' and extra == 'extra-9-speakeasy-rocm') or (extra == 'extra-9-speakeasy-cu130' and extra == 'extra-9-speakeasy-rocm101') or (extra == 'extra-9-speakeasy-rocm' and extra == 'extra-9-speakeasy-rocm101')" },
+    { name = "torch", version = "2.14.1+cu130", source = { registry = "https://download.pytorch.org/whl/cu130" }, marker = "extra == 'extra-9-speakeasy-cu130' or (extra == 'extra-9-speakeasy-cpu' and extra == 'extra-9-speakeasy-rocm') or (extra == 'extra-9-speakeasy-cpu' and extra == 'extra-9-speakeasy-rocm101') or (extra == 'extra-9-speakeasy-rocm' and extra == 'extra-9-speakeasy-rocm101')" },
+    { name = "torch", version = "2.14.1+rocm7.2", source = { registry = "https://download.pytorch.org/whl/rocm7.2" }, marker = "extra == 'extra-9-speakeasy-rocm' or (extra == 'extra-9-speakeasy-cpu' and extra == 'extra-9-speakeasy-cu130') or (extra == 'extra-9-speakeasy-cu130' and extra == 'extra-9-speakeasy-rocm101') or (extra == 'extra-9-speakeasy-cpu' and extra != 'extra-9-speakeasy-rocm' and extra == 'extra-9-speakeasy-rocm101')" },
+    { name = "torchaudio", version = "2.11.0+rocm7.2", source = { registry = "https://download.pytorch.org/whl/rocm7.2" }, marker = "extra == 'extra-9-speakeasy-rocm' or (extra == 'extra-9-speakeasy-cpu' and extra == 'extra-9-speakeasy-cu130') or (extra == 'extra-9-speakeasy-cu130' and extra == 'extra-9-speakeasy-rocm101') or (extra == 'extra-9-speakeasy-cpu' and extra != 'extra-9-speakeasy-rocm' and extra == 'extra-9-speakeasy-rocm101')" },
+    { name = "torchaudio", version = "2.11.1", source = { registry = "https://download.pytorch.org/whl/cpu" }, marker = "(sys_platform == 'darwin' and extra == 'extra-9-speakeasy-cpu') or (extra == 'extra-9-speakeasy-cpu' and extra == 'extra-9-speakeasy-cu130') or (extra == 'extra-9-speakeasy-cpu' and extra == 'extra-9-speakeasy-rocm') or (extra == 'extra-9-speakeasy-cpu' and extra == 'extra-9-speakeasy-rocm101') or (extra == 'extra-9-speakeasy-cu130' and extra == 'extra-9-speakeasy-rocm') or (extra == 'extra-9-speakeasy-cu130' and extra == 'extra-9-speakeasy-rocm101') or (extra == 'extra-9-speakeasy-rocm' and extra == 'extra-9-speakeasy-rocm101')" },
+    { name = "torchaudio", version = "2.11.1", source = { registry = "https://pypi.org/simple" }, marker = "extra == 'extra-9-speakeasy-cu130' or (extra == 'extra-9-speakeasy-cpu' and extra == 'extra-9-speakeasy-rocm') or (extra == 'extra-9-speakeasy-cpu' and extra == 'extra-9-speakeasy-rocm101') or (extra == 'extra-9-speakeasy-rocm' and extra == 'extra-9-speakeasy-rocm101')" },
+    { name = "torchaudio", version = "2.11.1+cpu", source = { registry = "https://download.pytorch.org/whl/cpu" }, marker = "(sys_platform != 'darwin' and extra == 'extra-9-speakeasy-cpu') or (extra == 'extra-9-speakeasy-cpu' and extra == 'extra-9-speakeasy-cu130') or (extra == 'extra-9-speakeasy-cpu' and extra == 'extra-9-speakeasy-rocm') or (extra == 'extra-9-speakeasy-cpu' and extra == 'extra-9-speakeasy-rocm101') or (extra == 'extra-9-speakeasy-cu130' and extra == 'extra-9-speakeasy-rocm') or (extra == 'extra-9-speakeasy-cu130' and extra == 'extra-9-speakeasy-rocm101') or (extra == 'extra-9-speakeasy-rocm' and extra == 'extra-9-speakeasy-rocm101')" },
+    { name = "torchaudio", version = "2.11.1+rocm10.1.0", source = { registry = "https://stable.repo.amd.com/rocm/whl-next/" }, marker = "extra == 'extra-9-speakeasy-rocm101' or (extra == 'extra-9-speakeasy-cpu' and extra == 'extra-9-speakeasy-cu130') or (extra == 'extra-9-speakeasy-cpu' and extra == 'extra-9-speakeasy-rocm') or (extra == 'extra-9-speakeasy-cu130' and extra == 'extra-9-speakeasy-rocm') or (extra != 'extra-9-speakeasy-cpu' and extra != 'extra-9-speakeasy-cu130' and extra != 'extra-9-speakeasy-rocm')" },
+    { name = "transformers" },
+    { name = "verbalis" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/03/e8/93a1fe8dc481781bcdf4f2747464edd08e71761332ae7e09977f7b82f039/reverb_tts-1.0.1.tar.gz", hash = "sha256:cb52196c4dd04de39c89289633b81e1a2514d3fad473ca737ee582049f404920", size = 1083361, upload-time = "2026-11-24T09:31:48.843Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/c5/2b/3d755b577cae4e0e6958fedcc5ce1d3c6a44ce1ff234e8c884ac0309d957/reverb_tts-1.0.1-py3-none-any.whl", hash = "sha256:f50b999dc05f70abd8d595b6f75040b11c96c97c2eb0823b5c60ee664a87982b", size = 23677, upload-time = "2026-11-24T09:31:47.495Z" },
+]
+
+[[package]]
 name = "rich"
 version = "15.0.0"
 source = { registry = "https://pypi.org/simple" }
@@ -1700,6 +1727,8 @@ dependencies = [
 cpu = [
     { name = "torch", version = "2.14.1", source = { registry = "https://download.pytorch.org/whl/cpu" }, marker = "(sys_platform == 'darwin' and extra == 'extra-9-speakeasy-cpu') or (extra == 'extra-9-speakeasy-cpu' and extra == 'extra-9-speakeasy-cu130') or (extra == 'extra-9-speakeasy-cpu' and extra == 'extra-9-speakeasy-rocm') or (extra == 'extra-9-speakeasy-cpu' and extra == 'extra-9-speakeasy-rocm101') or (extra == 'extra-9-speakeasy-cu130' and extra == 'extra-9-speakeasy-rocm') or (extra == 'extra-9-speakeasy-cu130' and extra == 'extra-9-speakeasy-rocm101') or (extra == 'extra-9-speakeasy-rocm' and extra == 'extra-9-speakeasy-rocm101')" },
     { name = "torch", version = "2.14.1+cpu", source = { registry = "https://download.pytorch.org/whl/cpu" }, marker = "(sys_platform != 'darwin' and extra == 'extra-9-speakeasy-cpu') or (extra == 'extra-9-speakeasy-cpu' and extra == 'extra-9-speakeasy-cu130') or (extra == 'extra-9-speakeasy-cpu' and extra == 'extra-9-speakeasy-rocm') or (extra == 'extra-9-speakeasy-cpu' and extra == 'extra-9-speakeasy-rocm101') or (extra == 'extra-9-speakeasy-cu130' and extra == 'extra-9-speakeasy-rocm') or (extra == 'extra-9-speakeasy-cu130' and extra == 'extra-9-speakeasy-rocm101') or (extra == 'extra-9-speakeasy-rocm' and extra == 'extra-9-speakeasy-rocm101')" },
+    { name = "torchaudio", version = "2.11.1", source = { registry = "https://download.pytorch.org/whl/cpu" }, marker = "(sys_platform == 'darwin' and extra == 'extra-9-speakeasy-cpu') or (extra == 'extra-9-speakeasy-cpu' and extra == 'extra-9-speakeasy-cu130') or (extra == 'extra-9-speakeasy-cpu' and extra == 'extra-9-speakeasy-rocm') or (extra == 'extra-9-speakeasy-cpu' and extra == 'extra-9-speakeasy-rocm101') or (extra == 'extra-9-speakeasy-cu130' and extra == 'extra-9-speakeasy-rocm') or (extra == 'extra-9-speakeasy-cu130' and extra == 'extra-9-speakeasy-rocm101') or (extra == 'extra-9-speakeasy-rocm' and extra == 'extra-9-speakeasy-rocm101')" },
+    { name = "torchaudio", version = "2.11.1+cpu", source = { registry = "https://download.pytorch.org/whl/cpu" }, marker = "(sys_platform != 'darwin' and extra == 'extra-9-speakeasy-cpu') or (extra == 'extra-9-speakeasy-cpu' and extra == 'extra-9-speakeasy-cu130') or (extra == 'extra-9-speakeasy-cpu' and extra == 'extra-9-speakeasy-rocm') or (extra == 'extra-9-speakeasy-cpu' and extra == 'extra-9-speakeasy-rocm101') or (extra == 'extra-9-speakeasy-cu130' and extra == 'extra-9-speakeasy-rocm') or (extra == 'extra-9-speakeasy-cu130' and extra == 'extra-9-speakeasy-rocm101') or (extra == 'extra-9-speakeasy-rocm' and extra == 'extra-9-speakeasy-rocm101')" },
 ]
 cu130 = [
     { name = "torch", version = "2.14.1+cu130", source = { registry = "https://download.pytorch.org/whl/cu130" } },
@@ -1707,6 +1736,7 @@ cu130 = [
 ]
 rocm = [
     { name = "torch", version = "2.14.1+rocm7.2", source = { registry = "https://download.pytorch.org/whl/rocm7.2" } },
+    { name = "torchaudio", version = "2.11.0+rocm7.2", source = { registry = "https://download.pytorch.org/whl/rocm7.2" }, marker = "sys_platform == 'linux'" },
     { name = "triton-rocm", marker = "sys_platform == 'linux'" },
 ]
 rocm101 = [
@@ -1718,7 +1748,16 @@ rocm101 = [
     { name = "rocm-sdk-device-gfx1151", marker = "sys_platform == 'linux'" },
     { name = "rocm-sdk-libraries", marker = "sys_platform == 'linux'" },
     { name = "torch", version = "2.14.0+rocm10.1.0", source = { registry = "https://stable.repo.amd.com/rocm/whl-next/" }, extra = ["device-gfx1151"], marker = "(sys_platform == 'linux' and extra != 'extra-9-speakeasy-cpu' and extra != 'extra-9-speakeasy-cu130' and extra != 'extra-9-speakeasy-rocm') or (extra == 'extra-9-speakeasy-cpu' and extra == 'extra-9-speakeasy-cu130') or (extra == 'extra-9-speakeasy-cpu' and extra == 'extra-9-speakeasy-rocm') or (extra == 'extra-9-speakeasy-cpu' and extra == 'extra-9-speakeasy-rocm101') or (extra == 'extra-9-speakeasy-cu130' and extra == 'extra-9-speakeasy-rocm') or (extra == 'extra-9-speakeasy-cu130' and extra == 'extra-9-speakeasy-rocm101') or (extra == 'extra-9-speakeasy-rocm' and extra == 'extra-9-speakeasy-rocm101')" },
+    { name = "torchaudio", version = "2.11.1+rocm10.1.0", source = { registry = "https://stable.repo.amd.com/rocm/whl-next/" }, marker = "sys_platform == 'linux'" },
     { name = "triton", version = "3.8.0+git669b31ac.rocm10.1.0", source = { registry = "https://stable.repo.amd.com/rocm/whl-next/" }, marker = "sys_platform == 'linux'" },
+]
+tts = [
+    { name = "reverb-tts" },
+    { name = "torchaudio", version = "2.11.0+rocm7.2", source = { registry = "https://download.pytorch.org/whl/rocm7.2" }, marker = "extra == 'extra-9-speakeasy-rocm' or (extra == 'extra-9-speakeasy-cpu' and extra == 'extra-9-speakeasy-cu130') or (extra == 'extra-9-speakeasy-cu130' and extra == 'extra-9-speakeasy-rocm101') or (extra == 'extra-9-speakeasy-cpu' and extra != 'extra-9-speakeasy-rocm' and extra == 'extra-9-speakeasy-rocm101')" },
+    { name = "torchaudio", version = "2.11.1", source = { registry = "https://download.pytorch.org/whl/cpu" }, marker = "(sys_platform == 'darwin' and extra == 'extra-9-speakeasy-cpu') or (extra == 'extra-9-speakeasy-cpu' and extra == 'extra-9-speakeasy-cu130') or (extra == 'extra-9-speakeasy-cpu' and extra == 'extra-9-speakeasy-rocm') or (extra == 'extra-9-speakeasy-cpu' and extra == 'extra-9-speakeasy-rocm101') or (extra == 'extra-9-speakeasy-cu130' and extra == 'extra-9-speakeasy-rocm') or (extra == 'extra-9-speakeasy-cu130' and extra == 'extra-9-speakeasy-rocm101') or (extra == 'extra-9-speakeasy-rocm' and extra == 'extra-9-speakeasy-rocm101')" },
+    { name = "torchaudio", version = "2.11.1", source = { registry = "https://pypi.org/simple" }, marker = "extra == 'extra-9-speakeasy-cu130' or (extra == 'extra-9-speakeasy-cpu' and extra == 'extra-9-speakeasy-rocm') or (extra == 'extra-9-speakeasy-cpu' and extra == 'extra-9-speakeasy-rocm101') or (extra == 'extra-9-speakeasy-rocm' and extra == 'extra-9-speakeasy-rocm101')" },
+    { name = "torchaudio", version = "2.11.1+cpu", source = { registry = "https://download.pytorch.org/whl/cpu" }, marker = "(sys_platform != 'darwin' and extra == 'extra-9-speakeasy-cpu') or (extra == 'extra-9-speakeasy-cpu' and extra == 'extra-9-speakeasy-cu130') or (extra == 'extra-9-speakeasy-cpu' and extra == 'extra-9-speakeasy-rocm') or (extra == 'extra-9-speakeasy-cpu' and extra == 'extra-9-speakeasy-rocm101') or (extra == 'extra-9-speakeasy-cu130' and extra == 'extra-9-speakeasy-rocm') or (extra == 'extra-9-speakeasy-cu130' and extra == 'extra-9-speakeasy-rocm101') or (extra == 'extra-9-speakeasy-rocm' and extra == 'extra-9-speakeasy-rocm101')" },
+    { name = "torchaudio", version = "2.11.1+rocm10.1.0", source = { registry = "https://stable.repo.amd.com/rocm/whl-next/" }, marker = "extra == 'extra-9-speakeasy-rocm101' or (extra == 'extra-9-speakeasy-cpu' and extra == 'extra-9-speakeasy-cu130') or (extra == 'extra-9-speakeasy-cpu' and extra == 'extra-9-speakeasy-rocm') or (extra == 'extra-9-speakeasy-cu130' and extra == 'extra-9-speakeasy-rocm') or (extra != 'extra-9-speakeasy-cpu' and extra != 'extra-9-speakeasy-cu130' and extra != 'extra-9-speakeasy-rocm')" },
 ]
 
 [package.dev-dependencies]
@@ -1733,11 +1772,12 @@ requires-dist = [
     { name = "accelerate", specifier = ">=1.0" },
     { name = "amd-torch-device-gfx1151", marker = "sys_platform == 'linux' and extra == 'rocm101'", specifier = ">=2.14.0", index = "https://stable.repo.amd.com/rocm/whl-next/", conflict = { package = "speakeasy", extra = "rocm101" } },
     { name = "amd-torch-device-gfx115x", marker = "sys_platform == 'linux' and extra == 'rocm101'", specifier = ">=2.14.0", index = "https://stable.repo.amd.com/rocm/whl-next/", conflict = { package = "speakeasy", extra = "rocm101" } },
-    { name = "av", specifier = "<19" },
+    { name = "av", specifier = ">=18.1.1,<19" },
     { name = "fastapi", specifier = ">=0.143.0" },
     { name = "faster-whisper", specifier = ">=1.2.1" },
     { name = "pydantic-settings", specifier = ">=2.15.0" },
     { name = "python-multipart", specifier = ">=0.0.32" },
+    { name = "reverb-tts", marker = "extra == 'tts'", specifier = ">=1.0.1,<2" },
     { name = "rocm", marker = "sys_platform == 'linux' and extra == 'rocm101'", specifier = ">=10.1.0", index = "https://stable.repo.amd.com/rocm/whl-next/", conflict = { package = "speakeasy", extra = "rocm101" } },
     { name = "rocm-bootstrap", marker = "sys_platform == 'linux' and extra == 'rocm101'", index = "https://stable.repo.amd.com/rocm/whl-next/", conflict = { package = "speakeasy", extra = "rocm101" } },
     { name = "rocm-sdk-core", marker = "sys_platform == 'linux' and extra == 'rocm101'", specifier = ">=10.1.0", index = "https://stable.repo.amd.com/rocm/whl-next/", conflict = { package = "speakeasy", extra = "rocm101" } },
@@ -1749,13 +1789,17 @@ requires-dist = [
     { name = "torch", marker = "extra == 'cu130'", specifier = ">=2.5", index = "https://download.pytorch.org/whl/cu130", conflict = { package = "speakeasy", extra = "cu130" } },
     { name = "torch", marker = "extra == 'rocm'", specifier = ">=2.5", index = "https://download.pytorch.org/whl/rocm7.2", conflict = { package = "speakeasy", extra = "rocm" } },
     { name = "torch", extras = ["device-gfx1151"], marker = "sys_platform == 'linux' and extra == 'rocm101'", specifier = ">=2.14.0", index = "https://stable.repo.amd.com/rocm/whl-next/", conflict = { package = "speakeasy", extra = "rocm101" } },
+    { name = "torchaudio", marker = "sys_platform == 'linux' and extra == 'rocm'", specifier = "==2.11.0+rocm7.2", index = "https://download.pytorch.org/whl/rocm7.2", conflict = { package = "speakeasy", extra = "rocm" } },
+    { name = "torchaudio", marker = "sys_platform == 'linux' and extra == 'rocm101'", specifier = "==2.11.1+rocm10.1.0", index = "https://stable.repo.amd.com/rocm/whl-next/", conflict = { package = "speakeasy", extra = "rocm101" } },
+    { name = "torchaudio", marker = "extra == 'cpu'", specifier = ">=2.11", index = "https://download.pytorch.org/whl/cpu", conflict = { package = "speakeasy", extra = "cpu" } },
+    { name = "torchaudio", marker = "extra == 'tts'", specifier = ">=2.11" },
     { name = "transformers", specifier = ">=4.46" },
     { name = "triton", marker = "sys_platform == 'linux' and extra == 'cu130'", specifier = ">=3.0" },
     { name = "triton", marker = "sys_platform == 'linux' and extra == 'rocm101'", specifier = ">=3.0", index = "https://stable.repo.amd.com/rocm/whl-next/", conflict = { package = "speakeasy", extra = "rocm101" } },
     { name = "triton-rocm", marker = "sys_platform == 'linux' and extra == 'rocm'", specifier = ">=3.6.0", index = "https://download.pytorch.org/whl/rocm7.2", conflict = { package = "speakeasy", extra = "rocm" } },
     { name = "uvicorn", specifier = ">=0.54.0" },
 ]
-provides-extras = ["cpu", "cu130", "rocm", "rocm101"]
+provides-extras = ["cpu", "cu130", "rocm", "rocm101", "tts"]
 
 [package.metadata.requires-dev]
 dev = [
@@ -1987,6 +2031,74 @@ wheels = [
 ]
 
 [[package]]
+name = "torchaudio"
+version = "2.11.0+rocm7.2"
+source = { registry = "https://download.pytorch.org/whl/rocm7.2" }
+wheels = [
+    { url = "https://download-r2.pytorch.org/whl/rocm7.2/torchaudio-2.11.0%2Brocm7.2-cp312-cp312-manylinux_2_28_x86_64.whl", hash = "sha256:e0316d938346cfa4ff04b91405a91ecc50bd18781023eca5763b79f0f7b9bc8c", upload-time = "2026-03-23T15:50:39Z" },
+    { url = "https://download-r2.pytorch.org/whl/rocm7.2/torchaudio-2.11.0%2Brocm7.2-cp313-cp313-manylinux_2_28_x86_64.whl", hash = "sha256:9228e1c534d04d80fa7b46205f448da947fd06f5573ba8602f041b504edb3596", upload-time = "2026-03-23T15:50:39Z" },
+    { url = "https://download-r2.pytorch.org/whl/rocm7.2/torchaudio-2.11.0%2Brocm7.2-cp313-cp313t-manylinux_2_28_x86_64.whl", hash = "sha256:3250a6f10026c12509e1c5450c6b736a0c8a6fd9fcd9ae9ab994cd3aa78b2185", upload-time = "2026-03-23T15:50:39Z" },
+    { url = "https://download-r2.pytorch.org/whl/rocm7.2/torchaudio-2.11.0%2Brocm7.2-cp314-cp314-manylinux_2_28_x86_64.whl", hash = "sha256:239f01c838d6724ef2a8e7d8192caf6f7c1676efe8f41b07b2ae1f082e3d2712", upload-time = "2026-03-23T15:50:39Z" },
+    { url = "https://download-r2.pytorch.org/whl/rocm7.2/torchaudio-2.11.0%2Brocm7.2-cp314-cp314t-manylinux_2_28_x86_64.whl", hash = "sha256:d536cd12c7653fdfbc17e4bc87d1558450f14a145715de0177dc6b6af3eb2927", upload-time = "2026-03-23T15:50:39Z" },
+]
+
+[[package]]
+name = "torchaudio"
+version = "2.11.1"
+source = { registry = "https://download.pytorch.org/whl/cpu" }
+resolution-markers = [
+    "sys_platform == 'darwin'",
+]
+dependencies = [
+    { name = "torch", version = "2.14.1", source = { registry = "https://download.pytorch.org/whl/cpu" }, marker = "(sys_platform == 'darwin' and extra == 'extra-9-speakeasy-cpu') or (extra == 'extra-9-speakeasy-cpu' and extra == 'extra-9-speakeasy-cu130') or (extra == 'extra-9-speakeasy-cpu' and extra == 'extra-9-speakeasy-rocm') or (extra == 'extra-9-speakeasy-cpu' and extra == 'extra-9-speakeasy-rocm101') or (extra == 'extra-9-speakeasy-cu130' and extra == 'extra-9-speakeasy-rocm') or (extra == 'extra-9-speakeasy-cu130' and extra == 'extra-9-speakeasy-rocm101') or (extra == 'extra-9-speakeasy-rocm' and extra == 'extra-9-speakeasy-rocm101')" },
+]
+wheels = [
+    { url = "https://download-r2.pytorch.org/whl/cpu/torchaudio-2.11.1-py3-none-macosx_14_0_arm64.whl", hash = "sha256:917667ab3e357d286b0e2405a33dc538e4344d554b72e1b2b03382a4352ca857", upload-time = "2026-10-28T14:19:39Z" },
+]
+
+[[package]]
+name = "torchaudio"
+version = "2.11.1"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "torch", version = "2.14.1+cu130", source = { registry = "https://download.pytorch.org/whl/cu130" }, marker = "extra == 'extra-9-speakeasy-cu130' or (extra == 'extra-9-speakeasy-cpu' and extra == 'extra-9-speakeasy-rocm') or (extra == 'extra-9-speakeasy-cpu' and extra == 'extra-9-speakeasy-rocm101') or (extra == 'extra-9-speakeasy-rocm' and extra == 'extra-9-speakeasy-rocm101')" },
+]
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/95/2a/c2b0f44906f8a4e8d90facdf68bc76bb14e72a0cbb9cc0457ca1c2fcd101/torchaudio-2.11.1-py3-none-macosx_14_0_arm64.whl", hash = "sha256:917667ab3e357d286b0e2405a33dc538e4344d554b72e1b2b03382a4352ca857", size = 699189, upload-time = "2026-10-28T15:21:42.129Z" },
+    { url = "https://files.pythonhosted.org/packages/90/c7/e352c0a0f34653f3f6a581b580352ab1c83e5d04019826ade4dfc26cf664/torchaudio-2.11.1-py3-none-manylinux_2_28_aarch64.whl", hash = "sha256:ad1175202b5cdb7585a38c1330845430e128c4ed8ceb770639318aa40fc1994b", size = 1678033, upload-time = "2026-10-28T15:21:43.28Z" },
+    { url = "https://files.pythonhosted.org/packages/e6/ad/b0bf9bfa9db80acf0ce660e01a67b3b735343ab51ce1410b18d2aaed254c/torchaudio-2.11.1-py3-none-manylinux_2_28_x86_64.whl", hash = "sha256:0173b5b51e1368aa88de3cbe4e98508b5e9df4d8d59356c4e1fbc830c96191ef", size = 1816417, upload-time = "2026-10-28T15:21:45.007Z" },
+    { url = "https://files.pythonhosted.org/packages/6b/9e/549c9bb2d139fe78c90c9381f9ffbfc87232336df4537a65ea31d51fcdee/torchaudio-2.11.1-py3-none-win_amd64.whl", hash = "sha256:46ea71634d181f797370f046075ea982043c228b38d674fd7d9fc1c855a37b6a", size = 334360, upload-time = "2026-10-28T15:21:40.715Z" },
+]
+
+[[package]]
+name = "torchaudio"
+version = "2.11.1+cpu"
+source = { registry = "https://download.pytorch.org/whl/cpu" }
+resolution-markers = [
+    "sys_platform != 'darwin'",
+]
+dependencies = [
+    { name = "torch", version = "2.14.1+cpu", source = { registry = "https://download.pytorch.org/whl/cpu" }, marker = "(sys_platform != 'darwin' and extra == 'extra-9-speakeasy-cpu') or (extra == 'extra-9-speakeasy-cpu' and extra == 'extra-9-speakeasy-cu130') or (extra == 'extra-9-speakeasy-cpu' and extra == 'extra-9-speakeasy-rocm') or (extra == 'extra-9-speakeasy-cpu' and extra == 'extra-9-speakeasy-rocm101') or (extra == 'extra-9-speakeasy-cu130' and extra == 'extra-9-speakeasy-rocm') or (extra == 'extra-9-speakeasy-cu130' and extra == 'extra-9-speakeasy-rocm101') or (extra == 'extra-9-speakeasy-rocm' and extra == 'extra-9-speakeasy-rocm101')" },
+]
+wheels = [
+    { url = "https://download-r2.pytorch.org/whl/cpu/torchaudio-2.11.1%2Bcpu-py3-none-manylinux_2_28_aarch64.whl", hash = "sha256:684d418d5aa2c98a8dff9a4e8911825da1109cda9b9e757eaf58ff9428c4577b", upload-time = "2026-10-28T14:19:39Z" },
+    { url = "https://download-r2.pytorch.org/whl/cpu/torchaudio-2.11.1%2Bcpu-py3-none-manylinux_2_28_x86_64.whl", hash = "sha256:fc050a1aeb556f8a7f5ee01531e6ae9f130aed81452da6d9052d3429e3a68d9e", upload-time = "2026-10-28T14:19:39Z" },
+    { url = "https://download-r2.pytorch.org/whl/cpu/torchaudio-2.11.1%2Bcpu-py3-none-win_amd64.whl", hash = "sha256:225163573057c05095824dcb7955b4bf605cae688add842951cba20d54cc4470", upload-time = "2026-10-28T14:19:39Z" },
+]
+
+[[package]]
+name = "torchaudio"
+version = "2.11.1+rocm10.1.0"
+source = { registry = "https://stable.repo.amd.com/rocm/whl-next/" }
+dependencies = [
+    { name = "torch", version = "2.14.0+rocm10.1.0", source = { registry = "https://stable.repo.amd.com/rocm/whl-next/" }, marker = "extra == 'extra-9-speakeasy-rocm101' or (extra == 'extra-9-speakeasy-cpu' and extra == 'extra-9-speakeasy-cu130') or (extra == 'extra-9-speakeasy-cpu' and extra == 'extra-9-speakeasy-rocm') or (extra == 'extra-9-speakeasy-cu130' and extra == 'extra-9-speakeasy-rocm') or (extra != 'extra-9-speakeasy-cpu' and extra != 'extra-9-speakeasy-cu130' and extra != 'extra-9-speakeasy-rocm')" },
+]
+wheels = [
+    { url = "https://stable.repo.amd.com/rocm/pytorch/whl-next/torchaudio/torchaudio-2.11.1%2Brocm10.1.0-py3-none-linux_x86_64.whl" },
+    { url = "https://stable.repo.amd.com/rocm/pytorch/whl-next/torchaudio/torchaudio-2.11.1%2Brocm10.1.0-py3-none-win_amd64.whl" },
+]
+
+[[package]]
 name = "tqdm"
 version = "4.70.1"
 source = { registry = "https://pypi.org/simple" }
@@ -2112,6 +2224,21 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/da/34/30e9280707135d2cfc589dfff3cb796bd07a3aeb1a3e415ba09dd89d7bb4/uvicorn-0.54.0.tar.gz", hash = "sha256:a2e33cbfaa0306f8e6b0c13e0cb89d7d7a2da3e62b90c66e18c33d9807b28620", size = 112283, upload-time = "2026-09-25T06:52:37.601Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/38/0c/b54a4fdd7f90a3af8b02ebc9ce6712c2c208b7926a2f7bad95c33ebbe943/uvicorn-0.54.0-py3-none-any.whl", hash = "sha256:505bdb0f318731d45f1f712071fc781a8981f6847a31c902c9f5e652d4f67faf", size = 87427, upload-time = "2026-09-25T06:52:35.829Z" },
+]
+
+[[package]]
+name = "verbalis"
+version = "0.1.1"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/8a/2b/0c9b12e93d5de32b1b2297aeec7265bfcae37657d7f4d4e32a89eaedf34e/verbalis-0.1.1.tar.gz", hash = "sha256:d38f5a6c4f2fd5192b50a7818fed9570a7515ff04b00f1ed5877d3d46af63fcd", size = 239274, upload-time = "2026-11-03T12:39:42.398Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/f0/56/237ce55ceaad804190a064a05e2ff928c6ff8a44de0185389b1f2383d9a2/verbalis-0.1.1-cp312-abi3-macosx_11_0_arm64.whl", hash = "sha256:4d384ba410e3c9065c1decfa9431d02ff38f071b1e646075c9cda04595777ea9", size = 1158848, upload-time = "2026-11-03T12:39:30.907Z" },
+    { url = "https://files.pythonhosted.org/packages/33/b4/1162b9bf70bd2cb0a746101b7645314e0dafe3fa746e4332b7264109fbbb/verbalis-0.1.1-cp312-abi3-macosx_11_0_x86_64.whl", hash = "sha256:0afeaa4b4c91db8f864097d342347c44e2ae00034cf7090598c52c7f97f5d911", size = 1232922, upload-time = "2026-11-03T12:39:32.487Z" },
+    { url = "https://files.pythonhosted.org/packages/e2/e7/f3342b33cafe0e690d6ad0451d50db7ea3728ad14882da52f41fd29a8137/verbalis-0.1.1-cp312-abi3-manylinux_2_26_aarch64.manylinux_2_28_aarch64.whl", hash = "sha256:4d0f0ec4d81d5ee85330fc5f822ee38249f912d0512087e62007fae7e7b5bf68", size = 1010724, upload-time = "2026-11-03T12:39:34.152Z" },
+    { url = "https://files.pythonhosted.org/packages/22/90/ddbf4f8ad044fa5f77e8c73aaa2dd7bf5532d95fc433fd8b96445093c323/verbalis-0.1.1-cp312-abi3-manylinux_2_27_x86_64.manylinux_2_28_x86_64.whl", hash = "sha256:f6ef20c12c1776cb174cd942b468d2aefbf84578a570671a79ba67ab7cca67cd", size = 1130355, upload-time = "2026-11-03T12:39:35.732Z" },
+    { url = "https://files.pythonhosted.org/packages/37/b5/504623963057bdb7ed7eb3da90afdc51893cbb2971ae1c74b47572203d6d/verbalis-0.1.1-cp312-abi3-musllinux_1_2_aarch64.whl", hash = "sha256:5cc3d38bb2006c4befad7efe8bc4b722636e1bd684a9e32c3f918dd32ff399fa", size = 1150873, upload-time = "2026-11-03T12:39:37.357Z" },
+    { url = "https://files.pythonhosted.org/packages/5a/a6/dc0ab98999a617c3af3e07705878924601d5f10977a9da7574d9f3f34b47/verbalis-0.1.1-cp312-abi3-musllinux_1_2_x86_64.whl", hash = "sha256:29c5855a50b34bcc01bdb9df5b71c893cb45a834ac2c403b3f8d5d7e9d4790ed", size = 1254596, upload-time = "2026-11-03T12:39:39.097Z" },
+    { url = "https://files.pythonhosted.org/packages/de/7a/f0c843f2c3331ae43a3697c3ffad4337bb2502f02467ebd021fc3dd77569/verbalis-0.1.1-cp312-abi3-win_amd64.whl", hash = "sha256:c76b2a7b77e0a574593dfcc8ecf4df38b9e8801cf3bd07dac3acd15ee07ca3a7", size = 1159078, upload-time = "2026-11-03T12:39:40.957Z" },
 ]
 
 [[package]]

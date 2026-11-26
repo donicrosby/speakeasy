@@ -1,0 +1,60 @@
+{
+ "w5": {
+  "words": 5,
+  "seconds": 1.6,
+  "elapsed_s": [
+   1.699,
+   0.27,
+   0.268
+  ]
+ },
+ "w12a": {
+  "words": 12,
+  "seconds": 4.4,
+  "elapsed_s": [
+   0.491,
+   0.485,
+   0.497
+  ]
+ },
+ "w25": {
+  "words": 26,
+  "seconds": 8.94,
+  "elapsed_s": [
+   7.537,
+   0.85,
+   0.835
+  ]
+ },
+ "w40": {
+  "words": 40,
+  "seconds": 17.38,
+  "elapsed_s": [
+   10.565,
+   1.56,
+   1.558
+  ]
+ },
+ "w60": {
+  "words": 58,
+  "seconds": 23.32,
+  "elapsed_s": [
+   18.926,
+   2.061,
+   2.075
+  ]
+ },
+ "w12b": {
+  "words": 12,
+  "seconds": 4.6,
+  "elapsed_s": [
+   3.884,
+   0.476,
+   0.476
+  ]
+ },
+ "codec_decode_s": {
+  "decode_new_shape": 12.42,
+  "decode_same_shape": 1.115
+ }
+}

@@ -1,0 +1,22 @@
+{
+ "reference": [
+  "The quick brown fox jumps over the lazy dog. Pack my box with five dozen liquor jugs.",
+  "en"
+ ],
+ "short": [
+  "Hello from an AMD graphics processor. This voice was cloned on ROCm.",
+  "en"
+ ],
+ "medium": [
+  "Speakeasy transcribes voice notes with Whisper and Moonshine. Tonight it learned to talk back. The model you are hearing is Reverb, a three hundred million parameter voice cloning system, running on the integrated graphics processor of a Strix Halo laptop.",
+  "en"
+ ],
+ "long": [
+  "Masked diffusion text to speech works nothing like the older autoregressive models. Instead of emitting one audio token at a time, the model lays out a grid of codec tokens for the whole utterance and fills it in over a handful of passes, deciding the coarse codebooks first and polishing the fine ones at the end. That is what makes it fast: every pass runs in parallel over the entire target, so the cost grows with the number of passes rather than the number of frames. Reverb was pruned down from a larger teacher with distillation, retrained on seven languages, and then tuned with preference optimization. The result fits in under a gigabyte, clones a voice from a few seconds of reference audio, and speaks faster than real time even on modest hardware.",
+  "en"
+ ],
+ "polish": [
+  "Dzień dobry, jak się masz? Miło mi cię poznać.",
+  "pl"
+ ]
+}
