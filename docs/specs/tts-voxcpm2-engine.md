@@ -1,6 +1,16 @@
 # Speakeasy VoxCPM2 (second TTS engine)
 
-> Spec v1.0. Validated against `voxcpm` 2.0.3 (PyPI wheel, `openbmb/VoxCPM2` weights), spike 005 (gfx1151), speakeasy `main` `c20645e`. Contract for Reverb: `docs/specs/tts-voice-cloning-ui.md` — this spec extends it and does not change it.
+> Spec v1.1 (rev1 — closes twelve must-fixes from r1 review). Validated against `voxcpm` 2.0.3 (PyPI wheel, `openbmb/VoxCPM2` weights), spike 005 (gfx1151), speakeasy `main` `c20645e`. Contract for Reverb: `docs/specs/tts-voice-cloning-ui.md` — this spec extends it and does not change it.
+
+### Revision summary (r1)
+
+**MF-3 (clone-create gating) — follows R1.** A `voxcpm2` clone-create in `not_loaded` or `loading` answers 503 with that state's reason and, in `not_loaded`, starts the single-flight load; it never waits. In `ready` it is 201. In `error` it is 503 — R1's gating applies. The page has one loading path (503, poll, resend once) for both speech and clone-create alike.
+
+**MF-6 adds new race rows.** The spec now covers: (a) the gate-pass-then-unload race — gate sees `ready`, unload drops the model, request re-checks under `tts_lock` → 503 `not_loaded` **and starts a load**, never 500; and (b) a load that fails (state `error`; polling requests see 503; nothing auto-retries — README states recovery is a restart).
+
+**MF-8c — dedicated create lock.** Clone-create serialization uses a dedicated create lock (not `tts_lock`). A synthesis holds `tts_lock` for up to minutes; an upload must never wait behind it. Exactly one create of an id wins (201), the other is 409, cross-engine included.
+
+**O-R13a — two new binding rules.** (1) Under `voxcpm2`, `input` whose first character (after stripping) is `(` is a 400 naming `design` and `style`. (2) The page's 503 mapping is engine-aware — a `voxcpm2` loading 503 shows the voxcpm2 message, never the Reverb download message.
 
 ## 1. Goals and non-goals
 
@@ -45,18 +55,18 @@ Each ruling from the brief's section 5, restated as a requirement with the check
 
 | #  | Requirement                                                                                                                                                                                                                                                                           | Check                                                                                              |
 |----|---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|----------------------------------------------------------------------------------------------------|
-| R1 | **Lazy and asynchronous.** A `voxcpm2` request while the engine is `not_loaded` starts one background load (single-flight) and answers 503 at once — it never waits. The page polls `/health/ready` and sends once `tts_state` includes `"voxcpm2": "ready"`.                          | `test_voxcpm2_not_loaded_triggers_load_and_503` — a speech request returns 503 immediately; the loader starts. |
-| R2 | **Idle unload.** While `ready`, every request updates a last-used time under the TTS lock. A daemon timer (every 15 s) unloads when `now - last_used` exceeds `tts_voxcpm_idle_seconds`, and only if it can take the TTS lock without waiting. `0` disables the timer.              | `test_voxcpm2_idle_unload` — a mock last-used time older than the timeout causes unload; a request during unload gets the `not_loaded` 503. |
-| R3 | **One TTS lock for both engines**, created at startup in `server.py` and held by every speech and clone request around its engine call. Reverb's own `RLock` inside `ReverbEngine` stays.                                                                                              | `test_shared_tts_lock_serialises_both_engines` — two concurrent requests (one `voxcpm2`, one Reverb) never run engine inference at once. |
+| R1 | **Lazy and asynchronous.** A `voxcpm2` request (speech **or** clone-create) while the engine is `not_loaded` starts one background load (single-flight) and answers 503 at once — it never waits. The page polls `/health/ready` and sends once the state is ready.                 | `test_voxcpm2_not_loaded_triggers_load_and_503` — a speech request returns 503 immediately; the loader starts. |
+| R2 | **Idle unload.** While `ready`, every **speech** request updates a last-used time under the TTS lock. A daemon timer (every 15 s) unloads when `now - last_used` exceeds `tts_voxcpm_idle_seconds`, and only if it can take the TTS lock without waiting. `0` disables the timer. Clone-create and voice listing do not bump last-used — only model-running requests do. | `test_voxcpm2_idle_unload` — a mock last-used time older than the timeout causes unload; a request during unload gets the `not_loaded` 503. |
+| R3 | **One TTS lock for both engines**, created at startup in `server.py` and held by every speech request around its engine call. Clone-create does not take this lock — it uses a dedicated create lock. Reverb's own `RLock` inside `ReverbEngine` stays.                              | `test_shared_tts_lock_serialises_both_engines` — two concurrent requests (one `voxcpm2`, one Reverb) never run engine inference at once. |
 | R4 | **Engine gates its own requests.** A `voxcpm2` request does not depend on Reverb being loaded, and a Reverb request does not depend on VoxCPM2. The voice listing answers when either is enabled. The VoxCPM2 clone store must not be created by Reverb's loader.                     | `test_voxcpm2_requests_work_with_reverb_disabled` and `test_reverb_requests_work_with_voxcpm2_disabled`. |
 | R5 | **Selecting the engine.** `"model": "voxcpm2"` selects it. Every other `model` value, including `""`, is Reverb. `voxcpm2` appears in `/v1/models` whenever its state is not `disabled`.                                                                                               | `test_model_field_selects_engine` — `"voxcpm2"` routes to VoxCPM2; `""`, `"tts-1"`, absent go to Reverb. `test_models_lists_voxcpm2_when_not_disabled`. |
 | R6 | **`voice` under `voxcpm2`.** `"default"` is the model's voice for the seed. Any other id must be a saved VoxCPM2 clone. A Reverb preset id is a 400 that names `default` and the saved clones. `language` is accepted and ignored. `seed` seeds the take (under the TTS lock).      | `test_voxcpm2_voice_default_and_clone` — `"default"` works; a saved clone works; a Reverb preset id returns 400. |
 | R7 | **`speed` under `voxcpm2`** must be 1.0 — anything else is a 400 that says the engine has no rate control.                                                                                                                                                                            | `test_voxcpm2_speed_rejected` — `speed: 1.5` returns 400.                                          |
 | R8 | **`cfg`, `design`, `style` with Reverb.** A value other than the default (`cfg` != 2.0 or non-null string) is a 400 that names `voxcpm2`. `cfg` outside 1.0 to 5.0 is a validation error.                                                                                             | `test_voxcpm2_fields_rejected_on_reverb` — sending `cfg` or `design` or `style` to Reverb returns 400. |
-| R9 | **`design` and `style` constraints.** At most one. `design` only with `voice: "default"`. `style` with `"default"` or a clone. Neither may contain `(`, `)` or a newline — that is a 400. The server builds the prefix `"(" + value + ")" + text`.                                    | `test_voxcpm2_design_or_style_validation` — rejects `(` / `)` / `\n`; rejects both `design` and `style` together; rejects `design` with a non-default voice. |
+| R9 | **`design` and `style` constraints.** At most one. `design` only with `voice: "default"`. `style` with `"default"` or a clone. Neither may contain `(`, `)` or a newline — that is a 400. The server builds the prefix `"(" + value + ")" + text`. `input` whose first character (after stripping) is `(` is a 400 that names `design` and `style`. | `test_voxcpm2_design_or_style_validation` — rejects `(` / `)` / `\n`; rejects both `design` and `style`; rejects `design` with a non-default voice; rejects `input` starting with `(`. |
 | R10 | **Clone create — store only, no model call.** `POST /v1/audio/voices` with `model=voxcpm2` stores the reference as 16 kHz mono WAV and a metadata JSON. `text` is optional. The model runs at speech time, not at clone-create time.                                                  | `test_voxcpm2_clone_stores_reference` — the clone create succeeds with `model=voxcpm2`; `.wav` and `.json` files exist; no VoxCPM inference ran. |
 | R11 | **Ids unique across engines.** A VoxCPM2 clone under an id that exists as a Reverb clone (or the reverse) is 409. `DELETE` removes the clone from whichever engine owns it and returns `"engine"` in the body.                                                                         | `test_clone_id_unique_across_engines` — creating a VoxCPM2 clone under a Reverb id returns 409; a delete returns the engine. |
-| R12 | **Bad take → 503, never a silent retry.** The server passes `retry_badcase=False`, applies the library's own rule (more than 6 audio patches per text token), and answers 503.                                                                                                        | `test_voxcpm2_bad_take_503` — a stub that simulates a bad take returns 503 with a fixed reason.     |
+| R12 | **Bad take → 503, never a silent retry.** `VoxCPM2Engine.generate` passes `retry_badcase=False` to the library, computes the audio-patch count (`floor(audio_seconds / 0.16)`, where 0.16 s is the model's patch duration from spike README "Results") and the text-token count via the model's tokenizer over the same flattened text the library generates from. If `patches >= 6 * tokens`, the take is bad. `generate` returns `(audio, bad_case)`; the route maps `bad_case` to 503. | `test_voxcpm2_bad_take_503` — a stub that simulates a bad take returns 503 with a fixed reason. |
 | R13 | **Fixed library arguments.** `load_denoiser=False`, `optimize=False`, `retry_badcase=False`, `inference_timesteps=10`, `max_len=4096`, `min_len=2`, no text normalisation, `denoise=False`. MIOpen disabled on HIP as Reverb does.                                                     | `test_voxcpm2_constructor_args` — the fake module records every argument passed to `from_pretrained` and `generate`. |
 | R14 | **Encoding at 48 kHz.** `wav`, `mp3`, `flac`, `pcm` at the engine's sample rate (Reverb: 24 kHz; VoxCPM2: 48 kHz). `pcm` is raw s16le mono.                                                                                                                                            | `test_voxcpm2_response_formats` — each format's byte count matches 48 kHz.                          |
 | R15 | **Both images get the engine.** The `tts-voxcpm` extra installs beside `tts` in `Dockerfile.cuda` and `Dockerfile.rocm`. The ROCm image runs a sanity step; the CUDA image imports the engine and nothing more.                                                                        | CI: `test_lock_default.py` covers the extra; Docker build at landing verifies the sanity steps.      |
@@ -116,7 +126,7 @@ Every fact is cited at an exact version and every citation was re-read before ma
 
 - **A1 — Reference length for VoxCPM2.** The library's `_encode_wav` (`model/voxcpm2.py:412`) loads with `librosa.load` and pads to a patch-aligned length — it imposes no minimum or maximum. The spec keeps Reverb's 1 to 30 s bounds. **Settled by:** coder verifies the pad-to-patch logic does not crash on a 1 s clip; if it does, the minimum is raised.
 - **A2 — CUDA runtime.** No NVIDIA GPU runs inference in this lane. The CUDA image's sanity step imports the engine. **Settled by:** the orchestrator at landing runs a real CUDA take; if it fails, the lane ships with a CUDA limitation note.
-- **A3 — `torch.manual_seed` on GPU.** `manual_seed` sets the CPU RNG state; the GPU kernels through the model may or may not yield identical results across device architectures. The brief verifies it on gfx1151. **Settled by:** the orchestrator verifies two takes with the same seed produce byte-identical audio on the target GPU at landing.
+- **A3 — `torch.manual_seed` on GPU.** `torch.manual_seed` seeds the CPU RNG state **and every accelerator generator** (CUDA, ROCm, MPS — `torch.cuda`, `torch.hip`, etc. are all seeded). The spike verifies this on gfx1151: the sampler draws `torch.randn` on the device, and two takes with the same seed produce byte-identical audio (spike README "Determinism"). **Settled by:** the orchestrator verifies two takes with the same seed produce byte-identical audio on the target GPU at landing.
 - **A4 — 48 kHz `pcm` format.** 48 kHz s16le mono follows the same convention as Reverb's 24 kHz; client libraries that hardcode a sample rate may misinterpret it. **Settled by:** documented in the README.
 
 ## 5. HTTP contract
@@ -301,18 +311,19 @@ The server builds the library input:
 
 ### 7.1 Shared objects at startup
 
-At server startup (in `lifespan`), two new globals are created:
+At server startup (in `lifespan`), three new globals are created:
 
 ```python
-tts_lock = threading.Lock()            # one lock shared by both engines
-voxcpm2_state = "disabled"
+tts_lock = threading.Lock()            # one lock shared by both engines for inference
+voxcpm2_create_lock = threading.Lock() # dedicated lock for clone-create serialization
+voxcpm2_state = "disabled" if not settings.tts_voxcpm_enabled else "not_loaded"
 voxcpm2: VoxCPM2Engine | None = None
 voxcpm2_store: VoxCPM2VoiceStore | None = None
 voxcpm2_error: str | None = None
 voxcpm2_last_used: float = 0.0
 ```
 
-The VoxCPM2 voice store is created eagerly — it is a filesystem tree under `<voices_dir>/voxcpm2/` and does not need a loaded engine. Reverb's `start_tts()` remains exactly as-is and does not touch VoxCPM2.
+**Store lifecycle.** The VoxCPM2 clone store is created eagerly at startup **iff `tts_voxcpm_enabled`** — it is a filesystem tree under `<voices_dir>/voxcpm2/` and does not need a loaded engine. The store is never created by the loader (the loader only loads the model) and is never dropped by an idle unload — `voxcpm2_store` survives `ready → not_loaded` transitions. When `tts_voxcpm_enabled` is `False`, `voxcpm2_state` is `"disabled"` and the store is never created; all endpoints answer as shown in the `disabled` state-table row. Reverb's `start_tts()` remains exactly as-is and does not touch VoxCPM2.
 
 ### 7.2 Single-flight load
 
@@ -320,7 +331,7 @@ When a speech or clone-create request arrives for `voxcpm2` and the state is `no
 
 1. Under `tts_lock`: check `voxcpm2_state`. If `not_loaded`, set it to `loading` and spawn `_load_voxcpm2()` on a daemon thread. Return 503.
 2. If `loading`, return 503 immediately — the load is already in flight.
-3. `_load_voxcpm2()` imports `voxcpm`, `torch` inside the function body (never at module import time). It constructs `VoxCPM2Engine`, creates the store, and publishes both under `tts_lock`. On failure, sets `error`.
+3. `_load_voxcpm2()` imports `voxcpm`, `torch` inside the function body (never at module import time). It constructs `VoxCPM2Engine` and publishes it under `tts_lock`. On failure, sets state to `error` and stores the exception text in `voxcpm2_error` (for logs only — never returned to clients). The loader never creates the store — the store already exists eagerly from startup.
 
 ### 7.3 Idle unload
 
@@ -328,33 +339,43 @@ A daemon thread, started after the first successful load, runs every 15 s:
 
 1. Acquires `tts_lock` **without blocking** (`acquire(blocking=False)`). If it cannot take the lock, sleeps and tries again — a running request owns it.
 2. Checks `time.monotonic() - voxcpm2_last_used > tts_voxcpm_idle_seconds`.
-3. If so: drops the model (`voxcpm2 = None`), calls `torch.cuda.empty_cache()` and `gc.collect()`, sets state to `not_loaded`, sets `voxcpm2_store = None`.
+3. If so: drops the model (`voxcpm2 = None`), calls `torch.cuda.empty_cache()` and `gc.collect()`, sets state to `not_loaded`. The store (`voxcpm2_store`) is **not** dropped — it survives the unload.
 4. Releases the lock.
 
 When `tts_voxcpm_idle_seconds` is `0`, the timer thread is never started — the engine stays loaded.
 
 ### 7.4 Shared TTS lock protocol
 
-Every speech or clone (the model-call portion, for Reverb) request:
+Every speech request:
 
-1. Acquires `tts_lock`.
-2. For VoxCPM2 speech: seeds the global generator (`torch.manual_seed(seed)`) if a `seed` is given, under the lock, immediately before the library call. Calls the engine's `generate` method.
-3. For Reverb speech: calls `tts.synthesize()` (which re-acquires Reverb's own `RLock`).
-4. Releases `tts_lock`.
-5. Encodes the result outside the lock.
+1. **Gate check** (no lock). If the engine is `not_loaded` / `loading` / `error` / `disabled`, return 503 immediately. This check never blocks and a pass is not a promise — the state can change before the lock is acquired.
+2. Acquire `tts_lock`.
+3. **State/engine re-check** under the lock. If the state is no longer `ready` (an unload completed between the gate check and the lock acquisition): set `not_loaded` and start a new load; return 503 `not_loaded`, never 500. If the state is `error`: return 503 `error`. This re-check guarantees the engine is present before the model call.
+4. For VoxCPM2 speech: seeds the global generator (`torch.manual_seed(seed)`) if a `seed` is given, under the lock, immediately before the library call. Calls `VoxCPM2Engine.generate()` which returns `(audio, bad_case)`.
+5. Map `bad_case` → 503 (see §5.1). Only a successful take flows through.
+6. For Reverb speech: calls `tts.synthesize()` (which re-acquires Reverb's own `RLock`).
+7. Update `voxcpm2_last_used` (speech only — clone-create and listing never bump it).
+8. Release `tts_lock`.
+9. Encode the result outside the lock.
 
-This ensures at most one inference runs at any moment across both engines, and the `torch.manual_seed` call is not interleaved with another request.
+Clone-create requests do **not** acquire `tts_lock`. They use `voxcpm2_create_lock` instead (see §7.5).
+
+This ensures at most one inference runs at any moment across both engines, the engine is guaranteed present during the model call (never a 500 from `None`), and the `torch.manual_seed` call is not interleaved with another request. Clone-create uploads never wait behind a minutes-long synthesis.
 
 ### 7.5 Races
 
 | Race                                                          | Outcome                                                                                          |
 |---------------------------------------------------------------|--------------------------------------------------------------------------------------------------|
-| Two first requests arrive while `not_loaded`                  | One starts the load (sets `loading`), the other sees `loading` and returns 503.                   |
-| Request arrives during unload                                 | Unload holds `tts_lock`; request blocks, then finds `not_loaded` → 503. Or request holds the lock first; unload skips. |
+| Two first requests arrive while `not_loaded` (speech or clone-create) | One starts the load (sets `loading`), the other sees `loading` and returns 503.                   |
+| Request (speech) passes the gate, unload takes the lock and completes before the request acquires | Gate sees `ready` → unload timer takes `tts_lock`, drops model, releases → request acquires, re-checks state → sees `not_loaded` → **starts a new load** and returns 503. Never 500. |
+| Request arrives during unload                                 | Unload holds `tts_lock`; request blocks, then finds `not_loaded` → 503 + starts load. Or request holds the lock first; unload skips. |
+| Load fails                                                    | `_load_voxcpm2()` catches the exception, sets state to `error` under `tts_lock`. Requests polling see `error` → 503 with the fixed error message. Nothing auto-retries — recovery is a server restart (noted in the README). |
 | Clone deleted between store listing and speech voice resolution | `exists()` passes, `load`/path read finds file gone → 400 (unknown voice), never 500.             |
-| Clone deleted mid-load or mid-unload (unload does not touch files) | Delete is a filesystem op that needs no lock; it succeeds at any moment.                          |
+| Clone deleted mid-load or mid-unload (unload does not touch files) | Delete is a filesystem op; it succeeds at any moment. |
 | Two concurrent deletes                                        | Both report `deleted: true`; see §10.                                                            |
-| Clone created during unload                                   | Clone create (`model=voxcpm2`) is a filesystem op; it does not need the engine loaded and is not gated past `not_loaded` state (the store exists eagerly). |
+| Clone-create in `not_loaded` / `loading` / `error`           | Answers 503 with that state's reason; in `not_loaded` starts the single-flight load (same path as speech). |
+| Clone-create in `ready`                                      | Answers 201 — store reference, no model call. Does not take `tts_lock`; uses `voxcpm2_create_lock`; does not bump last-used. |
+| Two concurrent clone-creates for the same id                  | Serialized under `voxcpm2_create_lock` from the both-stores existence check through the save. Exactly one returns 201; the other 409. Cross-engine collision (Reverb `.npz` vs VoxCPM2 `.json`) is covered: both stores are checked under the create lock. |
 
 ## 8. On-disk contract
 
@@ -362,8 +383,13 @@ This ensures at most one inference runs at any moment across both engines, and t
 
 - **Directory:** `<voices_dir>/voxcpm2/`, created eagerly at startup with `0o700`.
 - **Reference file:** `<voice_id>.wav` — 16 kHz mono PCM_16 WAV, decoded from the upload.
-- **Metadata file:** `<voice_id>.json` — `{"engine": "voxcpm2", "transcript": <string or null>, "seconds": <float>, "created": <int>}`.
-- **Write order:** WAV first (`os.replace` from a temp file), JSON second. The JSON is the authoritative existence marker: if only the WAV exists (a crash between the two writes), the clone is not listed by `listing()`.
+- **Metadata file:** `<voice_id>.json` — `{"engine": "voxcpm2", "language": <string or null>, "transcript": <string or null>, "seconds": <float>, "created": <int>}`.
+  - `language` is the value from the multipart form (accepted but not validated — stored verbatim).
+  - `transcript` is the form's `text` value or `null` when omitted.
+  - `seconds` is the decoded audio duration in seconds.
+- **Write order:** WAV first (`os.replace` from a temp file), JSON second. The JSON is the authoritative existence marker: `listing()` reads `.json` files only; if only the WAV exists (a crash between the two writes), the clone is not listed.
+- **Delete order:** JSON first (`os.remove`, `missing_ok=True`), then WAV (`os.remove`, `missing_ok=True`). An orphan `.wav` after a crash between the two deletes is unlisted and harmless (the JSON is gone, so `listing()` never finds it).
+- **Concurrent creates serialized:** The both-stores `exists` check and the file writes hold `voxcpm2_create_lock` — exactly one create for a given id wins (201); the other is 409, cross-engine included. Delete and listing take no new lock.
 
 ### Id uniqueness
 
@@ -379,25 +405,25 @@ Each named and testable.
 
 1. **SEC-V1 — clone id validated before any path is built.** `fullmatch` of the regex for both stores. A VoxCPM2 clone id passes the same `check_voice_id()` and additionally `Path(.../voxcpm2/<id>.wav)` is only built after validation. Test: `test_invalid_voxcpm2_voice_ids_rejected`.
 
-2. **SEC-V2 — `design` and `style` cannot inject the library's syntax.** `(`, `)`, and newlines are rejected; length caps hold. Test: `test_voxcpm2_design_style_syntax_rejected`.
+2. **SEC-V2 — `design` and `style` cannot inject the library's syntax.** `(`, `)`, and newlines are rejected; length caps hold. Additionally, `input` whose first character (after stripping) is `(` is rejected — the library treats a leading `(` as a design prefix. Test: `test_voxcpm2_design_style_syntax_rejected`.
 
-3. **SEC-V3 — reference path from validated id only.** The WAV path handed to the library comes from `voxcpm2_store._path(voice_id)` which calls `check_voice_id()` — the path is always under the store root. Test: code review of `VoxCPM2VoiceStore._path`.
+3. **SEC-V3 — reference path from validated id only.** The WAV path handed to the library comes from `voxcpm2_store._path(voice_id)` which calls `check_voice_id()` — the path is always under the store root. Test: `test_voxcpm2_store_invalid_ids` (already validates store-level rejection of traversal ids; extend it to assert `_path()` raises `ValueError` on a traversal id, and a speech request with a traversal id → 400).
 
 4. **SEC-V4 — upload limits unchanged.** >20 MB → 413; <1 s or >30 s → 400; decode failure → 400 with no exception text. Test: `test_voxcpm2_clone_upload_limits`.
 
-5. **SEC-V5 — one inference at a time across both engines.** `tts_lock` covers every call to `generate`, `synthesize`, and `clone`. Seeding is under the same lock. Test: `test_shared_tts_lock_serialises_both_engines`.
+5. **SEC-V5 — one inference at a time across both engines.** `tts_lock` covers every call to `generate` and `synthesize`. Seeding is under the same lock. Test: `test_shared_tts_lock_serialises_both_engines`.
 
 6. **SEC-V6 — single-flight load.** Two concurrent first requests start exactly one loader. The loader never runs on the startup path or blocks `/health/ready`. Test: `test_voxcpm2_single_flight_load`.
 
-7. **SEC-V7 — unload cannot run under a request.** Timer acquires `tts_lock` without blocking; a request during unload gets `not_loaded` 503, never a crash. Test: `test_voxcpm2_unload_during_request`.
+7. **SEC-V7 — never a crash from missing engine or unload race.** The state/engine re-check under `tts_lock` guarantees no code path reaches a model call with `voxcpm2 is None`. The gate-pass-then-unload race starts a new load and answers 503, never 500. A failed load sets `error`; polling requests see 503; nothing auto-retries — the README states recovery is a restart. Test: `test_voxcpm2_state_recheck_under_lock` and `test_voxcpm2_unload_during_request`.
 
-8. **SEC-V8 — bad-take check before audio returned.** `retry_badcase=False`; the server applies the >6 patches-per-token rule and answers 503. Test: `test_voxcpm2_bad_take_503`.
+8. **SEC-V8 — bad-take check before audio returned.** `VoxCPM2Engine.generate` passes `retry_badcase=False`, computes the audio-patch count (`floor(audio_seconds / 0.16)`, citing the 0.16 s model patch duration from spike README "Results") and the text-token count via the model's tokenizer over the same flattened text the library generates from. Returns `(audio, bad_case)` where `bad_case = (patches >= 6 * tokens)`. The route maps `bad_case` to 503. Test: `test_voxcpm2_bad_take_503`.
 
 9. **SEC-V9 — no exception text in 400/503/500 bodies.** Fixed strings per state; exceptions logged but never returned. Test: `test_no_exception_text_in_voxcpm2_error_bodies`.
 
 10. **SEC-V10 — CSP unchanged, no new inline script/style, no `innerHTML`.** The engine selector and new fields are added with `textContent` and `createElement`; CSP does not change. Test: `test_index_page` (existing, extended to check for voxcpm2 additions).
 
-11. **SEC-V11 — supply chain.** Lock overrides keep `torchcodec`, `gradio`, `gradio-client`, `hf-gradio`, `funasr`, `spaces`, `datasets`, `argbind`, `modelscope`, and `modelscope-hub` out. No existing pinned version changes. `uv sync --all-groups` (no extras) still resolves to CPU torch. Test: existing `test_lock_default.py` (including `test_no_extras_resolves_to_the_cpu_build`, which exists today) passes unchanged.
+11. **SEC-V11 — supply chain.** Lock overrides keep `torchcodec`, `gradio`, `gradio-client`, `hf-gradio`, `funasr`, `spaces`, `datasets`, `argbind`, `modelscope`, and `modelscope-hub` out. No existing pinned version changes (`fsspec==2026.9.0` and each torch pin unchanged). `uv sync --all-groups` (no extras) still resolves to CPU torch. Test: `test_lock_default.py` (existing, must pass unchanged). **New test:** `test_voxcpm2_extra_excludes_supply_chain_leaks` — runs `uv export --frozen` for each accelerator extra plus `--extra tts-voxcpm` and asserts: (a) none of the ten excluded packages appear in the resolution, and (b) `fsspec==2026.9.0` and the torch pins are unchanged from the lockfile. The `uv lock --dry-run` diff is the landing check; this test is the re-runnable proof.
 
 12. **SEC-V12 — `src/` never imports `voxcpm` at module import time.** All `import voxcpm` and `import torch` calls are inside function bodies (`_load_voxcpm2`, `VoxCPM2Engine.__init__`). CI has no `tts-voxcpm` extra. Test: `test_engines_do_not_import_voxcpm_at_import_time` mirrors the existing Reverb check.
 
@@ -417,7 +443,7 @@ For every pair where a clone is checked and then used — the clone can vanish b
 
 | Pair                                              | File:line   | Vanished between calls → outcome                                           |
 |---------------------------------------------------|-------------|----------------------------------------------------------------------------|
-| `exists(voice_id)` before save → `save()`         | create handler | `exists` re-check in the write path returns `False`; file written normally (no race with a delete — no model runs) |
+| `exists(voice_id)` before save → `save()`         | create handler | Serialized under `voxcpm2_create_lock` — the `exists` re-check and the write are atomic with respect to concurrent creates. A delete could race: `exists` passes, file deleted, `save` writes normally (no model runs, no dependency on the pre-existing file). |
 
 ### Delete path
 
@@ -439,10 +465,11 @@ The existing three-panel page (`index.html` + `app.js`) gains a VoxCPM2 engine s
 A `<select id="speak-engine">` above or beside the voice select, with two options: `reverb-tts` (default) and `voxcpm2`. Switching engines:
 
 - Rebuilds the voice list filtered to that engine.
+- Reverb selection: shows the language `<select>` populated from `data.languages` (as today). VoxCPM2 selection: hides or disables the language `<select>` (VoxCPM2 needs no language tag), and the page keeps the select's existing content for when the user switches back.
 - Shows/hides the `cfg`, `design`, and `style` controls (visible only for `voxcpm2`).
 - The Speak button sends `model` matching the selected engine.
 
-The clone panel gains a similar engine selector (`model` field in the multipart).
+The clone panel gains a similar engine selector (`model` field in the multipart). For `voxcpm2`: the language field is hidden (the stored value passes through to metadata but is not user-visible). The `text` field is optional (its label changes to "Transcript (optional for VoxCPM2)").
 
 ### 11.2 New controls (VoxCPM2 only)
 
@@ -458,11 +485,13 @@ The clone panel gains a similar engine selector (`model` field in the multipart)
 
 ### 11.4 First-use loading state
 
-When a `voxcpm2` speech request returns 503 with the loading reason:
+When a `voxcpm2` request (speech or clone-create) returns 503 with the loading reason:
 
-- The Speak button re-enables (the 503 is a normal rejection, not a hang).
-- The error area shows: `"VoxCPM2 is loading — the page will refresh when it is ready."`
-- `refreshStatus()` already polls `/health/ready` every 30 s. When `body.voxcpm2` becomes `"ready"`, the voices are reloaded and the error is cleared. A one-shot "ready" notification is sent through the existing status display — the user sees `"tts: ready, voxcpm2: ready"`.
+- The Speak button (or clone Save button) re-enables (the 503 is a normal rejection, not a hang).
+- The error area shows the **engine-specific** loading message: `"VoxCPM2 is still loading (first start downloads ~4.7 GB of weights) — check back in a minute."` Engine-specific means the page reads `error.body.error.message` from a `voxcpm2` 503 and never shows the Reverb download message for a `voxcpm2` loading state.
+- The pending request (speech input, voice, cfg, design, style — and for clone-create: the file blob, text, language, voice_id, model) is saved.
+- The page polls `/health/ready` **every 5 seconds** during the load. When `body.voxcpm2` becomes `"ready"`, the pending request is **auto-sent exactly once** — the page re-sends the speech or clone-create request the user made while the engine was loading. The voices are reloaded and the error is cleared. A one-shot "ready" notification is shown in the status display — the user sees `"tts: ready, voxcpm2: ready"`.
+- When `voxcpm2` does not become ready within 2 minutes, the 5-second poll reverts to the standard 30-second status poll (a stuck load stays `loading` forever at the server; the client stops the tight poll to save network).
 
 ### 11.5 Idle unload state
 
@@ -473,11 +502,12 @@ After an idle unload, the next `voxcpm2` request gets the `not_loaded` 503, whic
 | State                            | Message                                                                                          |
 |----------------------------------|--------------------------------------------------------------------------------------------------|
 | 401                              | "Wrong or missing API key — enter it above." (unchanged)                                        |
-| 503 (voxcpm2 `not_loaded`/`loading`) | "VoxCPM2 is still loading (first start downloads ~4.7 GB of weights) — check back in a minute."  |
+| 503 (voxcpm2 `not_loaded`/`loading`) | "VoxCPM2 is still loading (first start downloads ~4.7 GB of weights) — check back in a minute." (shown verbatim from the response; never the Reverb loading message) |
 | 503 (voxcpm2 `error`)            | "VoxCPM2 encountered an error and is unavailable — check the server logs."                       |
 | 503 (voxcpm2 bad take)           | "VoxCPM2 could not generate a good take for this input — try shorter text or a different seed."  |
 | 400 (VoxCPM2 field on Reverb)    | `error.body.error.message` — shown verbatim.                                                     |
 | 400 (`speed` != 1.0 on VoxCPM2)  | `error.body.error.message` — shown verbatim.                                                     |
+| 400 (input starts with `(`)      | `error.body.error.message` — shown verbatim.                                                     |
 | Network error                    | "Could not reach the server — check the connection." (unchanged)                                 |
 
 ### 11.7 CSP and security
