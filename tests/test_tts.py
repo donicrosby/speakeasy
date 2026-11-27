@@ -402,6 +402,36 @@ def test_tts_disabled_on_import_error(client, monkeypatch):
     assert client.post("/v1/audio/transcriptions", files=files).status_code == 200
 
 
+def test_start_tts_is_idempotent(client, fake_reverb, monkeypatch):
+    """A second start_tts() must not spawn a duplicate loader or reset state."""
+    started = threading.Event()
+    release = threading.Event()
+    spawned = []
+
+    def blocking_load():
+        started.set()
+        release.wait(10)
+
+    monkeypatch.setattr(server, "_load_tts", blocking_load)
+    real_thread = threading.Thread
+
+    def counting_thread(*args, **kwargs):
+        spawned.append(args)
+        return real_thread(*args, **kwargs)
+
+    monkeypatch.setattr(server.threading, "Thread", counting_thread)
+    try:
+        server.start_tts()
+        assert started.wait(5), "the tts-load thread did not start"
+        assert server.tts_state == "loading"
+        # A second call while a load is in flight is a no-op.
+        server.start_tts()
+        assert len(spawned) == 1
+        assert server.tts_state == "loading"
+    finally:
+        release.set()
+
+
 def test_no_exception_text_in_error_bodies(client, fake_reverb, monkeypatch, tmp_path):
     """SEC-16: no exception text in any response body (all three legs)."""
     secret = "reverb-tts failed to load: /models/weights/leaky RuntimeError boom"

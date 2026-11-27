@@ -124,6 +124,8 @@ async def lifespan(app: FastAPI):
 def start_tts() -> None:
     """Load Reverb off the startup path: readiness is Whisper's, not TTS's."""
     global tts_state
+    if tts_state in ("loading", "ready") or tts is not None:
+        return  # a load is already in flight (or done); never spawn a second
     if not settings.tts_enabled:
         log.info("tts disabled: SPEAKEASY_TTS_ENABLED=false")
         return
