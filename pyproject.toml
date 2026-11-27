@@ -29,13 +29,16 @@ dependencies = [
 #   uv sync --extra cu130   # NVIDIA CUDA (download.pytorch.org/whl/cu130)
 #   uv sync --extra rocm    # AMD ROCm 7.2 fallback (download.pytorch.org/whl/rocm7.2)
 #   uv sync --extra rocm101 # AMD ROCm 10.1 (stable.repo.amd.com/rocm/whl-next)
+#   (no --extra)            # the CPU build, same as `cpu` — see [tool.uv]
 #
 # The tts extra (Reverb TTS dependencies) combines with any accelerator extra:
 #   uv sync --extra rocm101 --extra tts
 #
 # The extras are declared conflicting so they can never coexist in one env.
-# NOTE: `torch` intentionally lives in the EXTRAS, not base dependencies —
-# base deps stay accelerator-agnostic (dev on macOS, CPU CI, tests).
+# NOTE: `torch` is declared in the EXTRAS, never as a pinned base dependency.
+# It is NOT absent from a no-extras install, though: `accelerate` (base)
+# requires torch, so `uv sync` with no extra still installs one. Which build
+# that is depends on the ORDER of [tool.uv] conflicts — see the note there.
 # ---------------------------------------------------------------------------
 [project.optional-dependencies]
 cpu = [
@@ -114,31 +117,40 @@ select = ["F", "I"]
 ignore = ["BLE001", "SIM115", "B008"]
 
 [tool.uv]
-# The three accelerator extras are mutually exclusive by construction.
+# The four accelerator extras are mutually exclusive by construction.
+#
+# ORDER IS LOAD-BEARING. uv turns this list into a decision tree in the order
+# the pairs are given, and the extra named LAST shares a resolution fork with
+# "no accelerator extra selected" — which is what a no-extras `uv sync` (and a
+# bare `uv run`) resolves to. That case still needs a torch, because
+# `accelerate` is a base dependency. With `cpu` last, no accelerator = the CPU
+# build. With a GPU extra last, every no-extras install silently pulled that
+# GPU stack (rocm101 last = ~1 GB of ROCm wheels into CI and dev envs).
+# tests/test_lock_default.py fails if a relock or a reorder breaks this.
 conflicts = [
     [
-        { extra = "cpu" },
-        { extra = "cu130" },
-    ],
-    [
-        { extra = "cpu" },
+        { extra = "rocm101" },
         { extra = "rocm" },
     ],
     [
+        { extra = "rocm101" },
         { extra = "cu130" },
-        { extra = "rocm" },
     ],
     [
+        { extra = "rocm101" },
         { extra = "cpu" },
-        { extra = "rocm101" },
-    ],
-    [
-        { extra = "cu130" },
-        { extra = "rocm101" },
     ],
     [
         { extra = "rocm" },
-        { extra = "rocm101" },
+        { extra = "cu130" },
+    ],
+    [
+        { extra = "rocm" },
+        { extra = "cpu" },
+    ],
+    [
+        { extra = "cu130" },
+        { extra = "cpu" },
     ],
 ]
 

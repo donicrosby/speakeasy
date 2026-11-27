@@ -86,6 +86,21 @@ One compose file, two services — start the one matching your GPU:
 docker compose up cuda    # or: docker compose up rocm
 ```
 
+### Authentication
+
+Off unless `SPEAKEASY_API_KEY` is set. When it is, the `/v1/*` endpoints
+require it as a bearer token and answer `401` otherwise; `/health` and
+`/health/ready` stay open. With compose, uncomment the `SPEAKEASY_API_KEY`
+passthrough in the service and export the variable:
+
+```bash
+export SPEAKEASY_API_KEY="$(openssl rand -hex 32)"
+docker compose up cuda
+curl -H "Authorization: Bearer $SPEAKEASY_API_KEY" http://localhost:8080/v1/models
+```
+
+It is one shared secret with no TLS — terminate TLS at the reverse proxy.
+
 ## Configuration (environment variables)
 
 All settings use the `SPEAKEASY_` prefix. Defaults shown are the
@@ -105,13 +120,16 @@ application defaults; the Dockerfiles additionally set
 | `SPEAKEASY_BEAM_SIZE` | `5` | Whisper beam size |
 | `SPEAKEASY_VAD_FILTER` | `true` | Enable Silero VAD filtering |
 | `SPEAKEASY_HF_HOME` | unset (image: `/models`) | Hugging Face cache directory — persist this |
+| `SPEAKEASY_API_KEY` | unset | Bearer token required by the `/v1/*` endpoints (`401` otherwise); unset or empty = no auth. `/health*` stays open |
 
 Example:
 
 ```bash
+export SPEAKEASY_API_KEY="$(openssl rand -hex 32)"   # optional: lock /v1/* behind a bearer token
 docker run --rm --gpus all -p 8080:8080 \
   -e SPEAKEASY_WHISPER_MODEL=distil-large-v3 \
   -e SPEAKEASY_MOONSHINE_ENABLED=false \
+  -e SPEAKEASY_API_KEY \
   -v speakeasy-models:/models \
   ghcr.io/donicrosby/speakeasy:cuda
 ```
@@ -132,7 +150,9 @@ watch `docker logs`):
 curl -s http://localhost:8080/health/ready | jq
 ```
 
-List loaded models:
+List loaded models (with `SPEAKEASY_API_KEY` set, add
+`-H "Authorization: Bearer $SPEAKEASY_API_KEY"` to this and the
+transcription call — the probes above stay open):
 
 ```bash
 curl -s http://localhost:8080/v1/models | jq

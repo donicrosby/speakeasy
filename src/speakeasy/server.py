@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import logging
 import os
+import secrets
 import tempfile
 from contextlib import asynccontextmanager
 
@@ -44,7 +45,11 @@ def require_auth(
     """Reject requests when SPEAKEASY_API_KEY is set and the token doesn't match."""
     if not settings.api_key:
         return  # auth disabled
-    if creds is None or creds.credentials != settings.api_key:
+    # Constant-time compare: a plain != leaks the token's matching prefix
+    # length through response timing.
+    if creds is None or not secrets.compare_digest(
+        creds.credentials.encode(), settings.api_key.encode()
+    ):
         raise HTTPException(status_code=401, detail="Invalid or missing API key")
 
 
