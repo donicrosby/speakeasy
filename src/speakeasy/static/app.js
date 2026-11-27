@@ -18,6 +18,7 @@ const MSG = {
     "TTS is still loading (first start downloads ~1 GB of weights) — check back in a minute.",
   disabled: "TTS is not available on this server.",
   ttsError: "TTS encountered an error and is unavailable — check the server logs.",
+  modelsLoading: "The speech models are still loading — check the status line.",
   network: "Could not reach the server — check the connection.",
   mic: "mic needs HTTPS or localhost — upload a file instead",
   working: "working…",
@@ -29,17 +30,35 @@ let voicesLoaded = false;
 
 // --- transport ---------------------------------------------------------------
 
-async function ttsReason(response) {
-  let text = "";
+// 503s come from two different loaders: the TTS endpoints (Reverb) and the
+// transcription endpoint (Whisper). Only the TTS paths may map a 503 to a TTS
+// message — a Whisper-side 503 must never read as "TTS encountered an error".
+const TTS_PATHS = ["/v1/audio/speech", "/v1/audio/voices"];
+
+function isTtsPath(path) {
+  return TTS_PATHS.some((p) => path === p || path.startsWith(p + "/"));
+}
+
+async function errorText(response) {
   try {
     const body = await response.json();
-    text = (body && body.error && body.error.message) || "";
+    return (body && body.error && body.error.message) || "";
   } catch (e) {
-    text = "";
+    return "";
   }
+}
+
+async function ttsReason(response) {
+  const text = await errorText(response);
   if (text.includes("loading")) return MSG.loading;
   if (text.includes("disabled")) return MSG.disabled;
   return MSG.ttsError;
+}
+
+async function sttReason(response) {
+  // The transcription endpoint's 503 is Whisper's (failed to load, or still
+  // loading), never TTS's: surface its reason, else a neutral line.
+  return (await errorText(response)) || MSG.modelsLoading;
 }
 
 async function api(path, options) {
@@ -62,7 +81,12 @@ async function api(path, options) {
     throw new Error(MSG.network);
   }
   if (response.status === 401) throw new Error(MSG.unauthorized);
-  if (response.status === 503) throw new Error(await ttsReason(response));
+  if (response.status === 503) {
+    const reason = isTtsPath(path)
+      ? await ttsReason(response)
+      : await sttReason(response);
+    throw new Error(reason);
+  }
   if (!response.ok) {
     let message = response.statusText || "HTTP " + response.status;
     try {

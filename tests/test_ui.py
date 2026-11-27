@@ -158,3 +158,28 @@ def test_voice_selects_fill_from_voices_endpoint():
     assert "languages" in js
     # Presets and saved clones populate the select through optgroups.
     assert "optgroup" in js
+
+
+def test_503_is_endpoint_aware():
+    """A Whisper-side 503 must not render as a TTS error (round-1 finding 1).
+
+    The transcription endpoint 503s from Whisper (failed to load, or still
+    loading), so only the TTS endpoints may map a 503 through the TTS reason
+    table (§7.5). The page is not executed here, so this pins the shipped
+    source the way the rest of this file does.
+    """
+    js = _read("app.js")
+    # The round-1 bug: every 503 went straight into the TTS reason mapper.
+    assert "throw new Error(await ttsReason(response))" not in js
+    # The 503 branch now dispatches on the request path...
+    assert "isTtsPath(path)" in js
+    assert "sttReason(response)" in js
+    # ...and the TTS path set is exactly the two TTS endpoints.
+    match = re.search(r"TTS_PATHS\s*=\s*\[(.*?)\]", js, re.DOTALL)
+    assert match, "TTS_PATHS not found in app.js"
+    tts_paths = match.group(1)
+    assert "/v1/audio/speech" in tts_paths
+    assert "/v1/audio/voices" in tts_paths
+    assert "transcriptions" not in tts_paths
+    # The Whisper side carries its own, non-TTS line.
+    assert "The speech models are still loading" in js
