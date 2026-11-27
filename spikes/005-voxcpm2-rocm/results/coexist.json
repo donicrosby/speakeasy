@@ -1,0 +1,99 @@
+{
+ "steps": [
+  {
+   "name": "whisper_load",
+   "s": 28.3
+  },
+  {
+   "name": "reverb_load",
+   "s": 33.4,
+   "mem": {
+    "alloc_gb": 1.32,
+    "reserved_gb": 1.36
+   }
+  },
+  {
+   "name": "voxcpm_load",
+   "s": 14.7,
+   "mem": {
+    "alloc_gb": 6.26,
+    "reserved_gb": 6.37
+   }
+  },
+  {
+   "name": "round1_reverb",
+   "s": 0.99,
+   "audio_s": 4.56
+  },
+  {
+   "name": "round1_whisper_after_reverb",
+   "s": 0.92,
+   "heard": "Hello from an AMD graphics processor. This voice was cloned on Rerotsim."
+  },
+  {
+   "name": "round1_after_reverb_alive",
+   "mem": {
+    "alloc_gb": 6.49,
+    "reserved_gb": 6.69
+   }
+  },
+  {
+   "name": "round1_voxcpm",
+   "s": 6.82,
+   "audio_s": 5.12
+  },
+  {
+   "name": "round1_whisper_after_voxcpm",
+   "s": 0.66,
+   "heard": "Hello from an AMD graphics processor. This voice was cloned on Ruxom."
+  },
+  {
+   "name": "round1_after_voxcpm_alive",
+   "mem": {
+    "alloc_gb": 6.96,
+    "reserved_gb": 7.32
+   }
+  },
+  {
+   "name": "round2_reverb",
+   "s": 0.22,
+   "audio_s": 4.56
+  },
+  {
+   "name": "round2_whisper_after_reverb",
+   "s": 0.69,
+   "heard": "Hello from an AMD graphics processor, this voice was cloned on Rayotim."
+  },
+  {
+   "name": "round2_after_reverb_alive",
+   "mem": {
+    "alloc_gb": 6.96,
+    "reserved_gb": 7.33
+   }
+  },
+  {
+   "name": "round2_voxcpm",
+   "s": 5.96,
+   "audio_s": 5.76
+  },
+  {
+   "name": "round2_whisper_after_voxcpm",
+   "s": 0.66,
+   "heard": "Hello from an AMD graphics processor. This voice was cloned on Rossim."
+  },
+  {
+   "name": "round2_after_voxcpm_alive",
+   "mem": {
+    "alloc_gb": 6.99,
+    "reserved_gb": 7.56
+   }
+  },
+  {
+   "name": "done_alive",
+   "mem": {
+    "alloc_gb": 6.99,
+    "reserved_gb": 7.56
+   }
+  }
+ ]
+}

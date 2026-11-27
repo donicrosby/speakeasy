@@ -125,7 +125,7 @@ All `/v1/*` endpoints require the bearer token (existing `require_auth`). `/heal
 | `voice`            | `str`                             | `"en_male_narrator_1"`   | A preset id or a saved clone id.                             |
 | `response_format`  | `"wav"` \| `"mp3"` \| `"flac"` \| `"pcm"` | `"mp3"` | —                                                            |
 | `speed`            | `float`                           | `1.0`                    | `0.25 ≤ speed ≤ 4.0`. A length factor, not a time-stretch.  |
-| `model`            | `str`                             | `""`                     | Accepted for OpenAI clients; the server has one TTS model.   |
+| `model`            | `str`                             | `""`                     | Accepted for OpenAI clients; the server has one TTS model. Superseded on 2026-11-27 by the owner's ruling, formalized in `tts-voxcpm2-engine.md` rev4 section 5.1: `model` is required and must be a listed engine. |
 | `language`         | `str` \| `null`                   | `null`                   | One of the 7 supported codes. Defaults to the voice's language. |
 | `seed`             | `int` \| `null`                   | `null`                   | Reproducible take when set; drawn randomly when null.        |
 

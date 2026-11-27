@@ -9,10 +9,12 @@ Production container images for speakeasy, in two GPU flavors:
 
 Both images run the same server (`speakeasy` → OpenAI-compatible
 transcription and text-to-speech API) on port **8080**, and both are built
-with the TTS stack (`--extra tts`: reverb-tts + torchaudio). On first start
-the Whisper (and optionally Moonshine) models are downloaded into the Hugging
-Face cache; TTS adds a one-time download of about 1.1 GB of Reverb weights and
-its codec. Mount a volume at `/models` to avoid re-downloading.
+with the TTS stack (`--extra tts`: reverb-tts + torchaudio) plus the second
+engine (`--extra tts-voxcpm`: VoxCPM2). On first start the Whisper (and
+optionally Moonshine) models are downloaded into the Hugging Face cache; TTS
+adds a one-time download of about 1.1 GB of Reverb weights and its codec, and
+the **first VoxCPM2 request** downloads about **4.7 GB** of VoxCPM2 weights.
+Mount a volume at `/models` to avoid re-downloading.
 
 ## Pulling prebuilt images
 
@@ -50,7 +52,12 @@ GPU stacks come from pip, selected by the conflicting extras in
 
 Each build ends with a sanity step that imports the stack and asserts the
 right builds are present: HIP torch and the HIP source-built ctranslate2 on
-ROCm, CUDA torch on CUDA, and the torchaudio/reverb-tts imports on both.
+ROCm, CUDA torch on CUDA, and the torchaudio/reverb-tts imports on both. Both
+sanity steps also import the VoxCPM2 engine.
+
+**VoxCPM2 is verified at runtime on ROCm (gfx1151) only.** The CUDA image
+installs the `tts-voxcpm` extra and imports the engine, but no NVIDIA GPU has
+run VoxCPM2 inference, so the CUDA path is unverified beyond that import.
 
 ## Running
 

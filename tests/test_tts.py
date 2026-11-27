@@ -349,7 +349,18 @@ def test_models_lists_reverb_tts(client, fake_reverb, monkeypatch):
     assert "reverb-tts" in [m["id"] for m in r.json()["data"]]
 
 
-def test_models_omits_tts_when_none(client):
+def test_models_lists_tts_by_configuration(client, monkeypatch):
+    """The listing follows the setting, not the engine's load state."""
+    monkeypatch.setattr(server.settings, "tts_enabled", True)
+    monkeypatch.setattr(server, "tts", None)
+    monkeypatch.setattr(server, "tts_state", "loading")
+
+    r = client.get("/v1/models")
+
+    assert r.status_code == 200
+    assert "reverb-tts" in [m["id"] for m in r.json()["data"]]
+
+    monkeypatch.setattr(server.settings, "tts_enabled", False)
     assert "reverb-tts" not in [
         m["id"] for m in client.get("/v1/models").json()["data"]
     ]
@@ -459,7 +470,7 @@ def test_no_exception_text_in_error_bodies(client, fake_reverb, monkeypatch, tmp
     r = client.post(
         "/v1/audio/voices",
         files={"file": ("x.wav", b"not audio", "audio/wav")},
-        data={"text": "hi", "language": "en"},
+        data={"model": "reverb-tts", "text": "hi", "language": "en"},
     )
     assert r.status_code == 400
     for leak in ("InvalidDataError", "av.", "Traceback", "ValueError"):
@@ -706,7 +717,10 @@ def speech_engine(monkeypatch):
     ],
 )
 def test_speech_response_formats(client, speech_engine, fmt, media_type):
-    r = client.post("/v1/audio/speech", json={"input": "Hi", "response_format": fmt})
+    r = client.post(
+        "/v1/audio/speech",
+        json={"model": "reverb-tts", "input": "Hi", "response_format": fmt},
+    )
     assert r.status_code == 200
     assert r.headers["content-type"] == media_type
     body = r.content
@@ -722,7 +736,7 @@ def test_speech_response_formats(client, speech_engine, fmt, media_type):
 
 def test_speech_defaults(client, speech_engine):
     """Default format mp3, default preset, speed 1.0, language from the voice."""
-    r = client.post("/v1/audio/speech", json={"input": "Hi"})
+    r = client.post("/v1/audio/speech", json={"model": "reverb-tts", "input": "Hi"})
     assert r.status_code == 200
     assert r.headers["content-type"] == "audio/mpeg"
     call = speech_engine.calls[-1]
@@ -734,7 +748,7 @@ def test_speech_defaults(client, speech_engine):
 
 
 def test_speech_response_headers(client, speech_engine):
-    r = client.post("/v1/audio/speech", json={"input": "Hi"})
+    r = client.post("/v1/audio/speech", json={"model": "reverb-tts", "input": "Hi"})
     assert r.status_code == 200
     assert r.headers["x-speakeasy-engine"] == "reverb-tts"
     assert float(r.headers["x-speakeasy-elapsed"]) >= 0
@@ -743,26 +757,38 @@ def test_speech_response_headers(client, speech_engine):
 
 
 def test_speech_language_defaults_to_voice_language(client, speech_engine):
-    client.post("/v1/audio/speech", json={"input": "Hi", "voice": "de_female_standard"})
+    client.post(
+        "/v1/audio/speech",
+        json={"model": "reverb-tts", "input": "Hi", "voice": "de_female_standard"},
+    )
     assert speech_engine.calls[-1]["language"] == "de"
 
     # An explicit language wins over the voice's.
     client.post(
         "/v1/audio/speech",
-        json={"input": "Hi", "voice": "en_male_narrator_1", "language": "de"},
+        json={
+            "model": "reverb-tts",
+            "input": "Hi",
+            "voice": "en_male_narrator_1",
+            "language": "de",
+        },
     )
     assert speech_engine.calls[-1]["language"] == "de"
 
 
 def test_speech_blank_input_is_400(client, speech_engine):
     for blank in ("", "   "):
-        r = client.post("/v1/audio/speech", json={"input": blank})
+        r = client.post(
+            "/v1/audio/speech", json={"model": "reverb-tts", "input": blank}
+        )
         assert r.status_code == 400
         assert r.json() == {"error": {"message": "input must not be empty"}}
 
 
 def test_speech_unknown_voice_lists_known_ids(client, speech_engine):
-    r = client.post("/v1/audio/speech", json={"input": "Hi", "voice": "nope"})
+    r = client.post(
+        "/v1/audio/speech", json={"model": "reverb-tts", "input": "Hi", "voice": "nope"}
+    )
     assert r.status_code == 400
     assert r.json() == {
         "error": {
@@ -774,7 +800,10 @@ def test_speech_unknown_voice_lists_known_ids(client, speech_engine):
 
 
 def test_speech_unsupported_language_400(client, speech_engine):
-    r = client.post("/v1/audio/speech", json={"input": "Hi", "language": "xx"})
+    r = client.post(
+        "/v1/audio/speech",
+        json={"model": "reverb-tts", "input": "Hi", "language": "xx"},
+    )
     assert r.status_code == 400
     assert r.json() == {
         "error": {"message": "unsupported language 'xx'. Supported: de, en"}
@@ -782,11 +811,16 @@ def test_speech_unsupported_language_400(client, speech_engine):
 
 
 def test_speech_pydantic_validation_422(client, speech_engine):
-    r = client.post("/v1/audio/speech", json={"input": "Hi", "speed": 5})
+    r = client.post(
+        "/v1/audio/speech", json={"model": "reverb-tts", "input": "Hi", "speed": 5}
+    )
     assert r.status_code == 422
     assert any(e["loc"][-1] == "speed" for e in r.json()["detail"])
 
-    r = client.post("/v1/audio/speech", json={"input": "Hi", "response_format": "ogg"})
+    r = client.post(
+        "/v1/audio/speech",
+        json={"model": "reverb-tts", "input": "Hi", "response_format": "ogg"},
+    )
     assert r.status_code == 422
     assert any(e["loc"][-1] == "response_format" for e in r.json()["detail"])
 
@@ -795,7 +829,10 @@ def test_speech_with_saved_clone(client, speech_engine, monkeypatch):
     clone = PresetVoice("de")
     monkeypatch.setattr(server, "voices_store", StubStore({"clone-abc1": clone}))
 
-    r = client.post("/v1/audio/speech", json={"input": "Hi", "voice": "clone-abc1"})
+    r = client.post(
+        "/v1/audio/speech",
+        json={"model": "reverb-tts", "input": "Hi", "voice": "clone-abc1"},
+    )
     assert r.status_code == 200
     assert speech_engine.calls[-1]["voice"] is clone
     assert speech_engine.calls[-1]["language"] == "de"
@@ -816,7 +853,10 @@ def test_speech_clone_deleted_before_load_is_unknown_voice(speech_engine, monkey
 
     monkeypatch.setattr(server, "voices_store", VanishedCloneStore())
     raw = TestClient(server.app, raise_server_exceptions=False)
-    r = raw.post("/v1/audio/speech", json={"input": "Hi", "voice": "clone-gone"})
+    r = raw.post(
+        "/v1/audio/speech",
+        json={"model": "reverb-tts", "input": "Hi", "voice": "clone-gone"},
+    )
 
     assert r.status_code == 400
     assert r.json() == {
@@ -831,7 +871,7 @@ def test_speech_clone_deleted_before_load_is_unknown_voice(speech_engine, monkey
 def test_speech_503_when_tts_unavailable(client, monkeypatch):
     monkeypatch.setattr(server, "tts", None)
     monkeypatch.setattr(server, "tts_state", "loading")
-    r = client.post("/v1/audio/speech", json={"input": "Hi"})
+    r = client.post("/v1/audio/speech", json={"model": "reverb-tts", "input": "Hi"})
     assert r.status_code == 503
     assert r.json() == {
         "error": {
@@ -842,9 +882,77 @@ def test_speech_503_when_tts_unavailable(client, monkeypatch):
     }
 
 
+def test_unknown_model_404_on_speech(client, speech_engine):
+    """A typo'd model never falls through to Reverb; the body names the listing."""
+    r = client.post("/v1/audio/speech", json={"model": "rever-tts", "input": "Hi"})
+
+    assert r.status_code == 404
+    assert r.json() == {
+        "error": {"message": "unknown model 'rever-tts'. Known: reverb-tts, voxcpm2"}
+    }
+    assert speech_engine.calls == []
+
+
+def test_speech_model_missing_or_empty_422(client, speech_engine):
+    for body in ({"input": "Hi"}, {"model": "", "input": "Hi"}):
+        r = client.post("/v1/audio/speech", json=body)
+        assert r.status_code == 422, body
+        assert any(e["loc"][-1] == "model" for e in r.json()["detail"]), body
+    assert speech_engine.calls == []
+
+
+def test_speech_voice_length_cap(client, speech_engine):
+    r = client.post(
+        "/v1/audio/speech",
+        json={"model": "reverb-tts", "input": "Hi", "voice": "a" * 65},
+    )
+    assert r.status_code == 422
+    assert any(e["loc"][-1] == "voice" for e in r.json()["detail"])
+
+    # 64 characters passes validation and reaches voice resolution.
+    r = client.post(
+        "/v1/audio/speech",
+        json={"model": "reverb-tts", "input": "Hi", "voice": "a" * 64},
+    )
+    assert r.status_code == 400
+    assert "unknown voice" in r.json()["error"]["message"]
+
+
+def test_listed_reverb_answers_loading_503(client, monkeypatch):
+    """A listed engine that is not ready keeps its pinned 503, never a 404."""
+    monkeypatch.setattr(server, "tts", None)
+    monkeypatch.setattr(server, "tts_state", "loading")
+
+    r = client.post("/v1/audio/speech", json={"model": "reverb-tts", "input": "Hi"})
+
+    assert r.status_code == 503
+    assert r.json() == {
+        "error": {
+            "message": (
+                "tts is still loading (first start downloads about 1 GB of weights)"
+            )
+        }
+    }
+
+
+def test_reverb_disabled_unlisted_404(client, monkeypatch):
+    monkeypatch.setattr(server.settings, "tts_enabled", False)
+    monkeypatch.setattr(server, "tts", None)
+    monkeypatch.setattr(server, "tts_state", "disabled")
+
+    ids = [m["id"] for m in client.get("/v1/models").json()["data"]]
+    assert "reverb-tts" not in ids
+
+    r = client.post("/v1/audio/speech", json={"model": "reverb-tts", "input": "Hi"})
+    assert r.status_code == 404
+    assert r.json() == {
+        "error": {"message": "unknown model 'reverb-tts'. Known: voxcpm2"}
+    }
+
+
 def test_speech_401_without_key(client, speech_engine, monkeypatch):
     monkeypatch.setattr(server.settings, "api_key", "unit-test-key")
-    r = client.post("/v1/audio/speech", json={"input": "Hi"})
+    r = client.post("/v1/audio/speech", json={"model": "reverb-tts", "input": "Hi"})
     assert r.status_code == 401
     assert r.json() == {"detail": "Invalid or missing API key"}
 
@@ -934,11 +1042,31 @@ def _clone_request(
     voice_id=None,
     filename="ref.wav",
 ):
-    form = {"text": text, "language": language}
+    form = {"model": "reverb-tts", "text": text, "language": language}
     if voice_id is not None:
         form["voice_id"] = voice_id
     files = {"file": (filename, audio, "audio/wav")} if audio is not None else None
     return client.post("/v1/audio/voices", files=files, data=form)
+
+
+def test_clone_create_with_a_disabled_engine_is_an_unlisted_404(
+    client, monkeypatch, clone_store
+):
+    """A clone for a disabled engine's id answers the listing 404, no file."""
+    monkeypatch.setattr(server.settings, "tts_enabled", False)
+    monkeypatch.setattr(server, "tts", None)
+    monkeypatch.setattr(server, "voices_store", clone_store)
+    monkeypatch.setattr(server, "tts_state", "disabled")
+
+    ids = [m["id"] for m in client.get("/v1/models").json()["data"]]
+    assert "reverb-tts" not in ids
+
+    r = _clone_request(client, _wav_bytes(3, 16000), voice_id="clone-deadbeef")
+    assert r.status_code == 404
+    assert r.json() == {
+        "error": {"message": "unknown model 'reverb-tts'. Known: voxcpm2"}
+    }
+    assert not list(clone_store.root.glob("*.npz"))
 
 
 def test_clone_creates_voice(client, clone_engine, clone_store):
@@ -1070,15 +1198,30 @@ def test_clone_401(client, clone_engine, monkeypatch):
 
 
 def test_clone_missing_fields_422(client, clone_engine):
-    """No file or no text → 422 (FastAPI/Pydantic)."""
+    """No `model` or no file → 422 (FastAPI/Pydantic)."""
     r = client.post("/v1/audio/voices", data={"text": "hi", "language": "en"})
     assert r.status_code == 422
 
     r = client.post(
         "/v1/audio/voices",
         files={"file": ("ref.wav", _wav_bytes(3, 16000), "audio/wav")},
+        data={"model": "reverb-tts"},
     )
     assert r.status_code == 422
+
+
+def test_clone_missing_text_422_body(client, clone_engine):
+    """A Reverb create without `text` is the 422 request validation produced."""
+    r = client.post(
+        "/v1/audio/voices",
+        files={"file": ("ref.wav", _wav_bytes(3, 16000), "audio/wav")},
+        data={"model": "reverb-tts"},
+    )
+    assert r.status_code == 422
+    assert r.text == (
+        '{"detail":[{"type":"missing","loc":["body","text"],'
+        '"msg":"Field required","input":null}]}'
+    )
 
 
 def test_clone_503(client, monkeypatch):
@@ -1162,7 +1305,11 @@ def test_engine_lock_serialises_calls(client, fake_reverb, monkeypatch, tmp_path
     def post():
         barrier.wait(5)
         c = TestClient(server.app)
-        statuses.append(c.post("/v1/audio/speech", json={"input": "Hi"}).status_code)
+        statuses.append(
+            c.post(
+                "/v1/audio/speech", json={"model": "reverb-tts", "input": "Hi"}
+            ).status_code
+        )
 
     threads = [threading.Thread(target=post) for _ in range(2)]
     for t in threads:
@@ -1178,7 +1325,12 @@ def test_delete_clone(client, clone_engine, clone_store):
     clone_store.save("clone-del1", ServerVoice(text="bye"))
     r = client.delete("/v1/audio/voices/clone-del1")
     assert r.status_code == 200
-    assert r.json() == {"id": "clone-del1", "object": "voice", "deleted": True}
+    assert r.json() == {
+        "id": "clone-del1",
+        "object": "voice",
+        "deleted": True,
+        "engine": "reverb-tts",
+    }
     assert not clone_store.exists("clone-del1")
     listed = [d["id"] for d in client.get("/v1/audio/voices").json()["data"]]
     assert "clone-del1" not in listed
@@ -1235,4 +1387,9 @@ def test_delete_of_a_clone_that_vanishes_first(clone_engine, clone_store, monkey
     r = raw.delete("/v1/audio/voices/clone-race1")
 
     assert r.status_code == 200
-    assert r.json() == {"id": "clone-race1", "object": "voice", "deleted": True}
+    assert r.json() == {
+        "id": "clone-race1",
+        "object": "voice",
+        "deleted": True,
+        "engine": "reverb-tts",
+    }

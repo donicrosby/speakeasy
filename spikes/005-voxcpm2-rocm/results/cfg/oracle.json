@@ -1,0 +1,103 @@
+{
+ "clone_cfg0.5": {
+  "expected": "Hello from an AMD graphics processor. This voice was cloned on ROCm.",
+  "transcribed": "Oh, man. Oh. Oh, man. Oh, boy. Wait. That's right. Wait.",
+  "ref_words": 12,
+  "edits": 12,
+  "wer": 1.0,
+  "whisper_elapsed_s": 21.79,
+  "audio_seconds": 9.28
+ },
+ "clone_cfg1.5": {
+  "expected": "Hello from an AMD graphics processor. This voice was cloned on ROCm.",
+  "transcribed": "Hello from an AMD graphics processor. This voice was cloned on RoCam.",
+  "ref_words": 12,
+  "edits": 1,
+  "wer": 0.0833,
+  "whisper_elapsed_s": 7.48,
+  "audio_seconds": 7.04
+ },
+ "clone_cfg1": {
+  "expected": "Hello from an AMD graphics processor. This voice was cloned on ROCm.",
+  "transcribed": "Hello from an AMD Graphics Processor. This voice was cloned on ParoCM.",
+  "ref_words": 12,
+  "edits": 1,
+  "wer": 0.0833,
+  "whisper_elapsed_s": 12.19,
+  "audio_seconds": 6.88
+ },
+ "clone_cfg2.5": {
+  "expected": "Hello from an AMD graphics processor. This voice was cloned on ROCm.",
+  "transcribed": "Hello from an AMD graphics processor. This voice was cloned on Rockham.",
+  "ref_words": 12,
+  "edits": 1,
+  "wer": 0.0833,
+  "whisper_elapsed_s": 10.38,
+  "audio_seconds": 5.28
+ },
+ "clone_cfg2": {
+  "expected": "Hello from an AMD graphics processor. This voice was cloned on ROCm.",
+  "transcribed": "Hello from an AMD graphics processor. This voice was cloned on Rock M.",
+  "ref_words": 12,
+  "edits": 2,
+  "wer": 0.1667,
+  "whisper_elapsed_s": 11.93,
+  "audio_seconds": 6.56
+ },
+ "clone_cfg2_seed8": {
+  "expected": "Hello from an AMD graphics processor. This voice was cloned on ROCm.",
+  "transcribed": "Hello from an AMD graphics processor. This voice was cloned on Rock'em.",
+  "ref_words": 12,
+  "edits": 2,
+  "wer": 0.1667,
+  "whisper_elapsed_s": 11.2,
+  "audio_seconds": 4.32
+ },
+ "clone_cfg2_seed9": {
+  "expected": "Hello from an AMD graphics processor. This voice was cloned on ROCm.",
+  "transcribed": "Hello from an AMD graphics processor. This voice was cloned on ROCM.",
+  "ref_words": 12,
+  "edits": 0,
+  "wer": 0.0,
+  "whisper_elapsed_s": 11.19,
+  "audio_seconds": 6.24
+ },
+ "clone_cfg3": {
+  "expected": "Hello from an AMD graphics processor. This voice was cloned on ROCm.",
+  "transcribed": "Hello from an AMD graphics processor. This voice was cloned on Rock'em.",
+  "ref_words": 12,
+  "edits": 2,
+  "wer": 0.1667,
+  "whisper_elapsed_s": 12.01,
+  "audio_seconds": 5.28
+ },
+ "clone_cfg4": {
+  "expected": "Hello from an AMD graphics processor. This voice was cloned on ROCm.",
+  "transcribed": "Hello from an AMD graphics processor. This voice was cloned on ROCM.",
+  "ref_words": 12,
+  "edits": 0,
+  "wer": 0.0,
+  "whisper_elapsed_s": 10.79,
+  "audio_seconds": 5.44
+ },
+ "clone_cfg5": {
+  "expected": "Hello from an AMD graphics processor. This voice was cloned on ROCm.",
+  "transcribed": "Hello from an AMD graphics processor. This voice was cloned on Rocky M.",
+  "ref_words": 12,
+  "edits": 2,
+  "wer": 0.1667,
+  "whisper_elapsed_s": 11.89,
+  "audio_seconds": 5.44
+ },
+ "warmup": {
+  "expected": "Hello from an AMD graphics processor. This voice was cloned on ROCm.",
+  "transcribed": "Hello from an AMD graphics processor, this voice was cloned on ROCM.",
+  "ref_words": 12,
+  "edits": 0,
+  "wer": 0.0,
+  "whisper_elapsed_s": 12.41,
+  "audio_seconds": 4.48
+ },
+ "aggregate_wer": 0.1742,
+ "aggregate": "23/132"
+}

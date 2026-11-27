@@ -1,0 +1,221 @@
+{
+ "reference_seconds": 5.63,
+ "modes": {
+  "short_ref": {
+   "first": {
+    "elapsed_s": 11.784,
+    "audio_s": 6.4,
+    "rtf": 1.8413,
+    "peak_gb": 5.71,
+    "peak_amplitude": 0.8217
+   },
+   "warm1": {
+    "elapsed_s": 6.116,
+    "audio_s": 5.28,
+    "rtf": 1.1583,
+    "peak_gb": 5.65,
+    "peak_amplitude": 0.6095
+   },
+   "warm2": {
+    "elapsed_s": 5.842,
+    "audio_s": 5.12,
+    "rtf": 1.1409,
+    "peak_gb": 5.64,
+    "peak_amplitude": 0.8368
+   },
+   "mean_warm_rtf": 1.1496
+  },
+  "short_cont": {
+   "first": {
+    "elapsed_s": 5.966,
+    "audio_s": 5.6,
+    "rtf": 1.0654,
+    "peak_gb": 5.69,
+    "peak_amplitude": 0.5841
+   },
+   "warm1": {
+    "elapsed_s": 6.067,
+    "audio_s": 5.76,
+    "rtf": 1.0533,
+    "peak_gb": 5.7,
+    "peak_amplitude": 0.5108
+   },
+   "warm2": {
+    "elapsed_s": 5.548,
+    "audio_s": 5.28,
+    "rtf": 1.0507,
+    "peak_gb": 5.67,
+    "peak_amplitude": 0.5665
+   },
+   "mean_warm_rtf": 1.052
+  },
+  "short_comb": {
+   "first": {
+    "elapsed_s": 5.825,
+    "audio_s": 5.44,
+    "rtf": 1.0707,
+    "peak_gb": 5.68,
+    "peak_amplitude": 0.6484
+   },
+   "warm1": {
+    "elapsed_s": 6.169,
+    "audio_s": 5.76,
+    "rtf": 1.071,
+    "peak_gb": 5.7,
+    "peak_amplitude": 0.6119
+   },
+   "warm2": {
+    "elapsed_s": 5.832,
+    "audio_s": 5.44,
+    "rtf": 1.072,
+    "peak_gb": 5.68,
+    "peak_amplitude": 0.774
+   },
+   "mean_warm_rtf": 1.0715
+  },
+  "medium_ref": {
+   "first": {
+    "elapsed_s": 18.091,
+    "audio_s": 17.28,
+    "rtf": 1.0469,
+    "peak_gb": 6.27,
+    "peak_amplitude": 0.6863
+   },
+   "warm1": {
+    "elapsed_s": 16.561,
+    "audio_s": 15.84,
+    "rtf": 1.0455,
+    "peak_gb": 6.19,
+    "peak_amplitude": 0.9017
+   },
+   "warm2": {
+    "elapsed_s": 17.515,
+    "audio_s": 16.64,
+    "rtf": 1.0526,
+    "peak_gb": 6.24,
+    "peak_amplitude": 0.7638
+   },
+   "mean_warm_rtf": 1.0491
+  },
+  "medium_cont": {
+   "first": {
+    "elapsed_s": 16.173,
+    "audio_s": 15.36,
+    "rtf": 1.0529,
+    "peak_gb": 6.19,
+    "peak_amplitude": 0.5434
+   },
+   "warm1": {
+    "elapsed_s": 16.77,
+    "audio_s": 16.0,
+    "rtf": 1.0481,
+    "peak_gb": 6.23,
+    "peak_amplitude": 0.5616
+   },
+   "warm2": {
+    "elapsed_s": 16.717,
+    "audio_s": 16.0,
+    "rtf": 1.0448,
+    "peak_gb": 6.23,
+    "peak_amplitude": 0.5461
+   },
+   "mean_warm_rtf": 1.0465
+  },
+  "medium_comb": {
+   "first": {
+    "elapsed_s": 22.826,
+    "audio_s": 15.84,
+    "rtf": 1.441,
+    "peak_gb": 6.22,
+    "peak_amplitude": 0.5708
+   },
+   "warm1": {
+    "elapsed_s": 24.398,
+    "audio_s": 15.84,
+    "rtf": 1.5403,
+    "peak_gb": 6.22,
+    "peak_amplitude": 0.6582
+   },
+   "warm2": {
+    "elapsed_s": 17.374,
+    "audio_s": 15.68,
+    "rtf": 1.108,
+    "peak_gb": 6.21,
+    "peak_amplitude": 0.5397
+   },
+   "mean_warm_rtf": 1.3241
+  },
+  "long_ref": {
+   "first": {
+    "elapsed_s": 69.428,
+    "audio_s": 54.4,
+    "rtf": 1.2763,
+    "peak_gb": 8.19,
+    "peak_amplitude": 0.6867
+   },
+   "warm1": {
+    "elapsed_s": 51.047,
+    "audio_s": 48.16,
+    "rtf": 1.0599,
+    "peak_gb": 7.86,
+    "peak_amplitude": 0.6001
+   },
+   "warm2": {
+    "elapsed_s": 49.654,
+    "audio_s": 47.36,
+    "rtf": 1.0484,
+    "peak_gb": 7.82,
+    "peak_amplitude": 0.5394
+   },
+   "mean_warm_rtf": 1.0541
+  },
+  "long_cont": {
+   "first": {
+    "elapsed_s": 53.731,
+    "audio_s": 45.28,
+    "rtf": 1.1866,
+    "peak_gb": 7.74,
+    "peak_amplitude": 0.6757
+   },
+   "warm1": {
+    "elapsed_s": 57.725,
+    "audio_s": 48.32,
+    "rtf": 1.1946,
+    "peak_gb": 7.9,
+    "peak_amplitude": 0.619
+   },
+   "warm2": {
+    "elapsed_s": 53.945,
+    "audio_s": 48.0,
+    "rtf": 1.1239,
+    "peak_gb": 7.88,
+    "peak_amplitude": 0.6095
+   },
+   "mean_warm_rtf": 1.1593
+  },
+  "long_comb": {
+   "first": {
+    "elapsed_s": 55.746,
+    "audio_s": 46.88,
+    "rtf": 1.1891,
+    "peak_gb": 7.82,
+    "peak_amplitude": 0.7044
+   },
+   "warm1": {
+    "elapsed_s": 50.619,
+    "audio_s": 46.4,
+    "rtf": 1.0909,
+    "peak_gb": 7.8,
+    "peak_amplitude": 0.5328
+   },
+   "warm2": {
+    "elapsed_s": 51.871,
+    "audio_s": 47.36,
+    "rtf": 1.0952,
+    "peak_gb": 7.85,
+    "peak_amplitude": 0.6985
+   },
+   "mean_warm_rtf": 1.093
+  }
+ }
+}

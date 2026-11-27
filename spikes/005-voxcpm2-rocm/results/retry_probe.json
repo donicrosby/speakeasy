@@ -1,0 +1,16 @@
+{
+ "short": {
+  "elapsed_s": 4.08,
+  "audio_s": 4.16,
+  "text_tokens": 16,
+  "audio_patches_per_text_token": 1.62,
+  "threshold": 6.0
+ },
+ "medium": {
+  "elapsed_s": 13.1,
+  "audio_s": 12.96,
+  "text_tokens": 56,
+  "audio_patches_per_text_token": 1.45,
+  "threshold": 6.0
+ }
+}

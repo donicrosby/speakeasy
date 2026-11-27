@@ -30,12 +30,30 @@
   <section id="panel-speak">
     <h2>Speak</h2>
     <textarea id="speak-text" placeholder="type text to speak"></textarea>
+    <label>Engine
+      <select id="speak-engine">
+        <option value="reverb-tts" selected>reverb-tts</option>
+        <option value="voxcpm2">voxcpm2</option>
+      </select>
+    </label>
     <label>Voice
       <select id="speak-voice"></select>
     </label>
-    <label>Language
+    <label id="speak-language-label">Language
       <select id="speak-language"></select>
     </label>
+    <div id="speak-voxcpm2-controls" hidden>
+      <label>CFG (guidance)
+        <input id="speak-cfg" type="range" min="1.0" max="5.0" step="0.1" value="2">
+        <output id="speak-cfg-value">2.0</output>
+      </label>
+      <label>Design
+        <textarea id="speak-design" maxlength="300" placeholder="describe a voice, e.g. 'A young woman, gentle and sweet voice'"></textarea>
+      </label>
+      <label>Style
+        <textarea id="speak-style" maxlength="200" placeholder="style hint, e.g. 'slightly faster, cheerful tone'"></textarea>
+      </label>
+    </div>
     <button id="speak-go" type="button">Speak</button>
     <audio id="speak-audio" controls></audio>
     <a id="speak-download" download="speech.wav">Download</a>
@@ -50,9 +68,16 @@
     <label>Upload
       <input id="clone-file" type="file" accept="audio/*">
     </label>
+    <label>Engine
+      <select id="clone-engine">
+        <option value="reverb-tts" selected>reverb-tts</option>
+        <option value="voxcpm2">voxcpm2</option>
+      </select>
+    </label>
     <button id="clone-use-last" type="button">use last transcript</button>
+    <label id="clone-text-label" for="clone-text">Transcript</label>
     <textarea id="clone-text" placeholder="exact transcript of the recording"></textarea>
-    <label>Language
+    <label id="clone-language-label">Language
       <select id="clone-language"></select>
     </label>
     <label>Name

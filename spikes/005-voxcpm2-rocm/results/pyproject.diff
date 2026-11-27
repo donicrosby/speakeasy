@@ -1,0 +1,38 @@
+--- /opt/data/workspace/speakeasy/pyproject.toml	2026-11-27 03:07:11.332813988 +0000
++++ /workspace/spike-005-scratch/lockcheck/pyproject.toml	2026-11-27 13:10:35.001141789 +0000
+@@ -103,6 +103,11 @@
+     # it too because a routed package must sit in the extra it is routed for.
+     "torchaudio>=2.11",
+ ]
++# TTS alternative: VoxCPM2 (2B, Apache-2.0, 48 kHz). Not in the conflicting
++# set; it combines with any accelerator extra and with `tts`.
++tts-voxcpm = [
++    "voxcpm>=2.0.3",
++]
+
+ [tool.ruff.lint]
+ # Explicit selection: ruff's "default" set includes opinionated rules that
+@@ -117,6 +122,23 @@
+ ignore = ["BLE001", "SIM115", "B008"]
+
+ [tool.uv]
++# voxcpm's metadata pulls packages its runtime path never imports (gradio,
++# funasr, spaces), training-only ones (datasets, argbind), the denoiser's
++# modelscope, and torchcodec, which has no ROCm build and breaks
++# torchaudio.load for the whole process when present. An impossible marker
++# removes each from the resolution.
++override-dependencies = [
++    "torchcodec; sys_platform == 'never'",
++    "gradio; sys_platform == 'never'",
++    "gradio-client; sys_platform == 'never'",
++    "hf-gradio; sys_platform == 'never'",
++    "funasr; sys_platform == 'never'",
++    "spaces; sys_platform == 'never'",
++    "datasets; sys_platform == 'never'",
++    "argbind; sys_platform == 'never'",
++    "modelscope; sys_platform == 'never'",
++    "modelscope-hub; sys_platform == 'never'",
++]
+ # The four accelerator extras are mutually exclusive by construction.
+ #
+ # ORDER IS LOAD-BEARING. uv turns this list into a decision tree in the order

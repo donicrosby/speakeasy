@@ -1,0 +1,27 @@
+{
+ "mode": "default",
+ "cudnn_enabled": true,
+ "load_s": 15.38,
+ "runs": {
+  "short_1": {
+   "elapsed_s": 4.54,
+   "audio_s": 4.48,
+   "rtf": 1.013
+  },
+  "short_2": {
+   "elapsed_s": 4.51,
+   "audio_s": 4.48,
+   "rtf": 1.006
+  },
+  "medium_1": {
+   "elapsed_s": 24.72,
+   "audio_s": 13.76,
+   "rtf": 1.796
+  },
+  "medium_2": {
+   "elapsed_s": 14.02,
+   "audio_s": 13.76,
+   "rtf": 1.019
+  }
+ }
+}

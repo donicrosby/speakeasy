@@ -1,0 +1,121 @@
+{
+ "args": {
+  "out": "/work/out/compile3",
+  "phase": "load,smoke,timing",
+  "optimize": 1,
+  "cudnn": "off",
+  "retry": 0,
+  "steps": 10,
+  "cfg": 2.0
+ },
+ "torch": "2.14.0+rocm10.1.0",
+ "hip": "7.16.26385",
+ "cudnn_enabled": false,
+ "load_s": 87.56,
+ "runtime": {
+  "device": "cuda",
+  "dtype": "bfloat16",
+  "sample_rate": 48000,
+  "encode_sample_rate": 16000,
+  "patch_size": 4,
+  "chunk_size": 640
+ },
+ "mem_after_load": {
+  "alloc_gb": 5.47,
+  "reserved_gb": 5.96,
+  "rss_gb": 4.63
+ },
+ "first_request": {
+  "elapsed_s": 6.108,
+  "audio_s": 4.64,
+  "rtf": 1.3164,
+  "chars": 68,
+  "peak": {
+   "alloc_gb": 5.43,
+   "reserved_gb": 6.28,
+   "rss_gb": 4.63
+  }
+ },
+ "determinism": {
+  "same_seed_identical": true,
+  "other_seed_differs": true
+ },
+ "timing": {
+  "short_clone": {
+   "first": {
+    "elapsed_s": 9.617,
+    "audio_s": 6.56,
+    "rtf": 1.4661,
+    "chars": 68,
+    "peak": {
+     "alloc_gb": 5.72,
+     "reserved_gb": 6.76,
+     "rss_gb": 4.53
+    }
+   },
+   "warm": [
+    {
+     "elapsed_s": 7.071,
+     "audio_s": 5.28,
+     "rtf": 1.3391,
+     "chars": 68,
+     "peak": {
+      "alloc_gb": 5.65,
+      "reserved_gb": 6.76,
+      "rss_gb": 4.53
+     }
+    },
+    {
+     "elapsed_s": 6.591,
+     "audio_s": 4.96,
+     "rtf": 1.3289,
+     "chars": 68,
+     "peak": {
+      "alloc_gb": 5.64,
+      "reserved_gb": 6.76,
+      "rss_gb": 4.53
+     }
+    }
+   ],
+   "mean_warm_rtf": 1.334
+  },
+  "short_plain": {
+   "first": {
+    "elapsed_s": 5.615,
+    "audio_s": 4.32,
+    "rtf": 1.2997,
+    "chars": 68,
+    "peak": {
+     "alloc_gb": 5.6,
+     "reserved_gb": 6.76,
+     "rss_gb": 4.53
+    }
+   },
+   "warm": [
+    {
+     "elapsed_s": 5.832,
+     "audio_s": 4.48,
+     "rtf": 1.3018,
+     "chars": 68,
+     "peak": {
+      "alloc_gb": 5.61,
+      "reserved_gb": 6.76,
+      "rss_gb": 4.53
+     }
+    },
+    {
+     "elapsed_s": 6.924,
+     "audio_s": 5.28,
+     "rtf": 1.3115,
+     "chars": 68,
+     "peak": {
+      "alloc_gb": 5.65,
+      "reserved_gb": 6.76,
+      "rss_gb": 4.53
+     }
+    }
+   ],
+   "mean_warm_rtf": 1.3067
+  }
+ }
+}

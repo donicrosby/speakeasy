@@ -22,7 +22,25 @@ const MSG = {
   network: "Could not reach the server — check the connection.",
   mic: "mic needs HTTPS or localhost — upload a file instead",
   working: "working…",
+  // The page's own table for the VoxCPM2 engine, chosen from /health/ready.
+  voxcpm2Disabled: "VoxCPM2 is disabled — enable it in the server config and restart.",
+  voxcpm2Loading:
+    "VoxCPM2 is still loading (first start downloads ~4.7 GB of weights) — check back in a minute.",
+  voxcpm2Error:
+    "VoxCPM2 encountered an error and is unavailable — check the server logs.",
+  voxcpm2BadTake:
+    "VoxCPM2 could not generate a good take for this input — try shorter text or a different seed.",
 };
+
+// The server's two engine ids.
+const ENGINE_REVERB = "reverb-tts";
+const ENGINE_VOXCPM2 = "voxcpm2";
+
+// While VoxCPM2 loads, readiness is re-read at this interval.
+const LOAD_POLL_MS = 5000;
+
+const TRANSCRIPT_REQUIRED = "Transcript";
+const TRANSCRIPT_OPTIONAL = "Transcript (optional for VoxCPM2)";
 
 // The server's default preset voice, and the language the page opens on. A
 // rebuilt <select> lands on its first option and "de" sorts first, so both are
@@ -33,6 +51,12 @@ const DEFAULT_LANGUAGE = "en";
 // The most recent recording, shared with the Clone panel.
 let lastRecording = null;
 let voicesLoaded = false;
+// Every voice object from the last listing, before engine filtering.
+let voices = [];
+// A request made while VoxCPM2 was loading, re-sent once the engine is ready.
+let pendingRequest = null;
+// The single readiness poll loop; null when no loop is running.
+let loadPollTimer = null;
 
 // --- transport ---------------------------------------------------------------
 
@@ -67,6 +91,26 @@ async function sttReason(response) {
   return (await errorText(response)) || MSG.modelsLoading;
 }
 
+// The engine's state from readiness. The page's own 503 messages are chosen
+// from this value, never from the API's response body.
+async function voxcpm2State() {
+  try {
+    const response = await fetch("/health/ready");
+    const body = await response.json();
+    return body.voxcpm2 || "";
+  } catch (e) {
+    return "";
+  }
+}
+
+function voxcpm2Message(state) {
+  if (state === "disabled") return MSG.voxcpm2Disabled;
+  if (state === "error") return MSG.voxcpm2Error;
+  // A ready engine can still reject a take: that is the bad-take refusal.
+  if (state === "ready") return MSG.voxcpm2BadTake;
+  return MSG.voxcpm2Loading;
+}
+
 async function api(path, options) {
   const opts = options || {};
   const init = { headers: { Authorization: "Bearer " + key() } };
@@ -88,6 +132,14 @@ async function api(path, options) {
   }
   if (response.status === 401) throw new Error(MSG.unauthorized);
   if (response.status === 503) {
+    if (opts.engine === ENGINE_VOXCPM2) {
+      // The page's own per-state message; the state rides the error so the
+      // caller can hold the request for the loading path.
+      const state = await voxcpm2State();
+      const failure = new Error(voxcpm2Message(state));
+      failure.voxcpm2State = state;
+      throw failure;
+    }
     const reason = isTtsPath(path)
       ? await ttsReason(response)
       : await sttReason(response);
@@ -325,12 +377,31 @@ function addGroup(select, label, voices) {
 }
 
 function fillVoices(items) {
+  voices = items;
+  const engine = $("speak-engine").value;
   const select = $("speak-voice");
   const current = select.value; // read before the rebuild resets it
   select.textContent = "";
-  addGroup(select, "Presets", items.filter((v) => v.type === "preset"));
-  addGroup(select, "Saved", items.filter((v) => v.type === "clone"));
-  const ids = items.map((v) => v.id);
+  if (engine === ENGINE_VOXCPM2) {
+    // VoxCPM2's own voice is synthetic: the model's default, no reference.
+    const option = document.createElement("option");
+    option.value = "default";
+    option.textContent = "default";
+    select.appendChild(option);
+    addGroup(
+      select,
+      "Saved",
+      items.filter((v) => v.type === "clone" && v.engine === ENGINE_VOXCPM2),
+    );
+  } else {
+    addGroup(select, "Presets", items.filter((v) => v.type === "preset"));
+    addGroup(
+      select,
+      "Saved",
+      items.filter((v) => v.type === "clone" && v.engine !== ENGINE_VOXCPM2),
+    );
+  }
+  const ids = Array.from(select.options).map((option) => option.value);
   if (ids.includes(current)) {
     select.value = current; // a reload must never drop the user's voice
   } else if (ids.includes(DEFAULT_VOICE)) {
@@ -339,43 +410,128 @@ function fillVoices(items) {
     select.value = ids[0] || "";
   }
   syncSpeakLanguage();
+  syncSpeakDesignStyle();
 }
 
 function syncSpeakLanguage() {
+  if ($("speak-engine").value === ENGINE_VOXCPM2) return;
   const select = $("speak-voice");
   const option = select.selectedOptions[0];
   const language = option && option.dataset.language;
   if (language) $("speak-language").value = language;
 }
 
+function applySpeakEngine() {
+  const engine = $("speak-engine").value;
+  const voxcpm2 = engine === ENGINE_VOXCPM2;
+  // VoxCPM2 needs no language tag: hide the select, keep its content.
+  $("speak-language-label").hidden = voxcpm2;
+  $("speak-voxcpm2-controls").hidden = !voxcpm2;
+  // Rebuild the list for the chosen engine, then re-apply the field rules.
+  fillVoices(voices);
+  syncCfgDisplay();
+}
+
+function syncCfgDisplay() {
+  $("speak-cfg-value").textContent = Number($("speak-cfg").value).toFixed(1);
+}
+
+// An engine the server does not list is never offered: while `/health/ready`
+// reports `voxcpm2` as `disabled`, its option is removed from both selectors.
+function applyEngineAvailability(state) {
+  const disabled = state === "disabled";
+  for (const selectId of ["speak-engine", "clone-engine"]) {
+    const select = $(selectId);
+    const option = Array.from(select.options).find(
+      (item) => item.value === ENGINE_VOXCPM2,
+    );
+    if (!option) continue;
+    option.disabled = disabled;
+    option.hidden = disabled;
+    if (disabled && select.value === ENGINE_VOXCPM2) {
+      select.value = ENGINE_REVERB;
+    }
+  }
+  if (disabled) {
+    applySpeakEngine();
+    applyCloneEngine();
+  }
+}
+
+function syncSpeakDesignStyle() {
+  if ($("speak-engine").value !== ENGINE_VOXCPM2) return;
+  const design = $("speak-design");
+  const styleText = $("speak-style");
+  const isDefault = $("speak-voice").value === "default";
+  // Design only creates a voice, so it belongs to the default voice only; and
+  // a request never carries both.
+  design.disabled = !isDefault || styleText.value.trim() !== "";
+  styleText.disabled = isDefault && design.value.trim() !== "";
+}
+
+// The speech body, per engine. `cfg`, `design` and `style` are VoxCPM2's
+// alone; `speed` and `language` are Reverb's, so neither is sent for VoxCPM2.
+function speechPayload(engine, text) {
+  const voice = $("speak-voice").value;
+  if (engine === ENGINE_VOXCPM2) {
+    const payload = {
+      model: ENGINE_VOXCPM2,
+      input: text,
+      voice: voice,
+      response_format: "wav",
+      cfg: Number($("speak-cfg").value),
+    };
+    if (voice === "default") {
+      const design = $("speak-design").value.trim();
+      if (design) payload.design = design;
+    }
+    const styleText = $("speak-style").value.trim();
+    if (styleText) payload.style = styleText;
+    return payload;
+  }
+  return {
+    model: ENGINE_REVERB,
+    input: text,
+    voice: voice,
+    language: $("speak-language").value || null,
+    response_format: "wav",
+  };
+}
+
+async function runSpeech(payload) {
+  const response = await api("/v1/audio/speech", {
+    json: payload,
+    raw: true,
+    engine: payload.model,
+  });
+  const duration = response.headers.get("X-Speakeasy-Audio-Duration") || "?";
+  const elapsed = response.headers.get("X-Speakeasy-Elapsed") || "?";
+  const rtf = response.headers.get("X-Speakeasy-RTF") || "?";
+  const blob = await response.blob();
+  const previous = speakUrl;
+  speakUrl = URL.createObjectURL(blob);
+  $("speak-audio").src = speakUrl;
+  $("speak-download").href = speakUrl;
+  if (previous) URL.revokeObjectURL(previous);
+  $("speak-meta").textContent =
+    duration + " s · " + elapsed + " s · " + rtf + "x real time";
+}
+
 async function speak() {
   clearError($("speak-error"));
   const text = $("speak-text").value.trim();
   if (!text) throw new Error("type something to speak");
+  const payload = speechPayload($("speak-engine").value, text);
   const btn = $("speak-go");
   btn.disabled = true;
   btn.textContent = MSG.working;
   try {
-    const response = await api("/v1/audio/speech", {
-      json: {
-        input: text,
-        voice: $("speak-voice").value,
-        language: $("speak-language").value || null,
-        response_format: "wav",
-      },
-      raw: true,
-    });
-    const duration = response.headers.get("X-Speakeasy-Audio-Duration") || "?";
-    const elapsed = response.headers.get("X-Speakeasy-Elapsed") || "?";
-    const rtf = response.headers.get("X-Speakeasy-RTF") || "?";
-    const blob = await response.blob();
-    const previous = speakUrl;
-    speakUrl = URL.createObjectURL(blob);
-    $("speak-audio").src = speakUrl;
-    $("speak-download").href = speakUrl;
-    if (previous) URL.revokeObjectURL(previous);
-    $("speak-meta").textContent =
-      duration + " s · " + elapsed + " s · " + rtf + "x real time";
+    await runSpeech(payload);
+  } catch (err) {
+    if (err.voxcpm2State === "loading" || err.voxcpm2State === "not_loaded") {
+      holdPending({ kind: "speech", payload: payload });
+    }
+    throw err;
   } finally {
     btn.disabled = false;
     btn.textContent = "Speak";
@@ -383,7 +539,14 @@ async function speak() {
 }
 
 function wireSpeak() {
-  $("speak-voice").addEventListener("change", syncSpeakLanguage);
+  $("speak-voice").addEventListener("change", () => {
+    syncSpeakLanguage();
+    syncSpeakDesignStyle();
+  });
+  $("speak-engine").addEventListener("change", applySpeakEngine);
+  $("speak-cfg").addEventListener("input", syncCfgDisplay);
+  $("speak-design").addEventListener("input", syncSpeakDesignStyle);
+  $("speak-style").addEventListener("input", syncSpeakDesignStyle);
   $("speak-go").addEventListener("click", () => {
     guard($("speak-error"), speak);
   });
@@ -397,7 +560,8 @@ function renderClones(items) {
   for (const voice of items.filter((v) => v.type === "clone")) {
     const item = document.createElement("li");
     const label = document.createElement("span");
-    label.textContent = voice.id;
+    // The engine is part of the name: ids are unique across both engines.
+    label.textContent = voice.id + " · " + voice.engine;
     const del = document.createElement("button");
     del.type = "button";
     del.textContent = "Delete";
@@ -416,31 +580,72 @@ async function deleteVoice(id) {
   await loadVoices();
 }
 
-async function saveClone() {
-  clearError($("clone-error"));
-  const text = $("clone-text").value.trim();
-  if (!text) throw new Error("enter the recording's exact transcript");
-  if (!lastRecording) throw new Error("record or upload a reference clip first");
-  const seconds = lastRecording.duration;
-  if (seconds && (seconds < 1 || seconds > 30)) {
-    throw new Error("reference must be 1-30 s (3-10 s is best)");
-  }
+function applyCloneEngine() {
+  const voxcpm2 = $("clone-engine").value === ENGINE_VOXCPM2;
+  // The stored language still passes through to metadata; it is not a choice.
+  $("clone-language-label").hidden = voxcpm2;
+  $("clone-text-label").textContent = voxcpm2
+    ? TRANSCRIPT_OPTIONAL
+    : TRANSCRIPT_REQUIRED;
+  $("clone-text").placeholder = voxcpm2
+    ? "optional transcript of the recording"
+    : "exact transcript of the recording";
+}
+
+function cloneForm(fields) {
   const form = new FormData();
-  form.append("file", lastRecording.blob, "reference.wav");
-  form.append("text", text);
-  form.append("language", $("clone-language").value || "en");
-  const name = $("clone-name").value.trim();
-  if (name) form.append("voice_id", name);
+  form.append("file", fields.blob, "reference.wav");
+  if (fields.text) form.append("text", fields.text);
+  form.append("language", fields.language || "en");
+  form.append("model", fields.model);
+  if (fields.voiceId) form.append("voice_id", fields.voiceId);
+  return form;
+}
+
+async function runCloneSave(fields) {
   const btn = $("clone-save");
   btn.disabled = true;
   btn.textContent = MSG.working;
   try {
-    const created = await api("/v1/audio/voices", { form: form });
+    const created = await api("/v1/audio/voices", {
+      form: cloneForm(fields),
+      engine: fields.model,
+    });
     $("clone-meta").textContent = "saved " + created.id;
     await loadVoices();
   } finally {
     btn.disabled = false;
     btn.textContent = "Save";
+  }
+}
+
+async function saveClone() {
+  clearError($("clone-error"));
+  const engine = $("clone-engine").value;
+  const text = $("clone-text").value.trim();
+  // VoxCPM2 takes a reference with or without its transcript.
+  if (engine !== ENGINE_VOXCPM2 && !text) {
+    throw new Error("enter the recording's exact transcript");
+  }
+  if (!lastRecording) throw new Error("record or upload a reference clip first");
+  const seconds = lastRecording.duration;
+  if (seconds && (seconds < 1 || seconds > 30)) {
+    throw new Error("reference must be 1-30 s (3-10 s is best)");
+  }
+  const fields = {
+    blob: lastRecording.blob,
+    text: text,
+    language: $("clone-language").value || "en",
+    voiceId: $("clone-name").value.trim(),
+    model: engine,
+  };
+  try {
+    await runCloneSave(fields);
+  } catch (err) {
+    if (err.voxcpm2State === "loading" || err.voxcpm2State === "not_loaded") {
+      holdPending({ kind: "clone", payload: fields });
+    }
+    throw err;
   }
 }
 
@@ -458,9 +663,51 @@ function wireClone() {
   $("clone-use-last").addEventListener("click", () => {
     $("clone-text").value = $("listen-text").value;
   });
+  $("clone-engine").addEventListener("change", applyCloneEngine);
   $("clone-save").addEventListener("click", () => {
     guard($("clone-error"), saveClone);
   });
+}
+
+// --- first-use loading -------------------------------------------------------
+
+// Hold the request the user just made and start (or join) the readiness poll.
+function holdPending(request) {
+  pendingRequest = request;
+  pollWhileLoading();
+}
+
+function sendPending(pending) {
+  if (pending.kind === "speech") {
+    guard($("speak-error"), () => runSpeech(pending.payload));
+  } else {
+    guard($("clone-error"), () => runCloneSave(pending.payload));
+  }
+}
+
+function pollWhileLoading() {
+  if (loadPollTimer !== null) return; // one loop only, however many requests
+  const tick = async () => {
+    // The token stays held while the probe is in flight: a request held in
+    // that window joins this loop instead of starting a second one.
+    const state = await voxcpm2State();
+    if (state === "loading") {
+      loadPollTimer = window.setTimeout(tick, LOAD_POLL_MS);
+      return;
+    }
+    // Any other status ends the loop: release the token, take the request
+    // once, then decide. A resend that reports loading again can restart it.
+    loadPollTimer = null;
+    const pending = pendingRequest;
+    pendingRequest = null;
+    if (state !== "ready") return;
+    await refreshStatus();
+    clearError($("speak-error"));
+    clearError($("clone-error"));
+    loadVoices().catch((err) => showError($("speak-error"), err));
+    if (pending) sendPending(pending);
+  };
+  loadPollTimer = window.setTimeout(tick, LOAD_POLL_MS);
 }
 
 // --- voices, status, boot ----------------------------------------------------
@@ -468,7 +715,9 @@ function wireClone() {
 async function loadVoices() {
   const data = await api("/v1/audio/voices");
   const items = data.data || [];
-  fillLanguages(data.languages || []);
+  // `languages` comes only from a ready Reverb engine; a listing without it
+  // must leave the language select's content alone.
+  if (data.languages) fillLanguages(data.languages);
   fillVoices(items);
   renderClones(items);
   voicesLoaded = true;
@@ -481,8 +730,21 @@ async function refreshStatus() {
     const body = await response.json();
     const models = (body.models || []).join(", ") || "none";
     el.textContent =
-      (body.device || "?") + " · " + models + " · tts: " + (body.tts || "?");
-    if (body.tts === "ready" && !voicesLoaded) {
+      (body.device || "?") +
+      " · " +
+      models +
+      " · tts: " +
+      (body.tts || "?") +
+      ", voxcpm2: " +
+      (body.voxcpm2 || "?");
+    // A disabled engine is absent from the server's listing, so it is absent
+    // from both selectors too.
+    applyEngineAvailability(body.voxcpm2 || "");
+    // The listing answers whenever either engine can supply voices.
+    const canList =
+      body.tts === "ready" ||
+      (body.voxcpm2 && body.voxcpm2 !== "disabled");
+    if (canList && !voicesLoaded) {
       loadVoices().catch((err) => showError($("speak-error"), err));
     }
   } catch (e) {

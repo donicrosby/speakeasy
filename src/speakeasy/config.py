@@ -40,6 +40,12 @@ class Settings(BaseSettings):
     )
     tts_device: str = "auto"  # auto | cuda | cpu
 
+    # VoxCPM2 — a second TTS engine, loaded on the first request and unloaded
+    # after an idle period. A no-op unless the `tts-voxcpm` extra is installed.
+    tts_voxcpm_enabled: bool = True
+    tts_voxcpm_model: str = "openbmb/VoxCPM2"
+    tts_voxcpm_idle_seconds: int = 600  # 0 disables the idle unload
+
     # Saved voice clones. When set, the value IS the voices root (no /voices
     # suffix is appended); otherwise <hf_home or ~/.cache/speakeasy>/voices.
     voices_dir: str | None = None
