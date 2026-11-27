@@ -68,16 +68,19 @@ curl -F file=@note.wav -F response_format=json \
 
 ### `POST /v1/audio/speech`
 
-OpenAI-compatible text-to-speech. Reverb-TTS is the default; `"model":
-"voxcpm2"` selects the [second engine](#second-tts-engine-voxcpm2). JSON body:
+OpenAI-compatible text-to-speech. `model` is required and must name an engine
+the deployment lists in `GET /v1/models`: `"reverb-tts"` for Reverb-TTS,
+`"voxcpm2"` for the [second engine](#second-tts-engine-voxcpm2). There is no
+default — a missing or empty `model` is a `422`, and an unlisted one is a
+`404`. JSON body:
 
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
 | `input` | string | *(required)* | Text to speak, 1–4096 chars (whitespace-only is rejected) |
-| `voice` | string | `en_male_narrator_1` | A preset id or a saved clone id. Under `voxcpm2`: `"default"` (its own voice) or a saved VoxCPM2 clone |
+| `voice` | string | `en_male_narrator_1` | A preset id or a saved clone id, at most 64 chars. Under `voxcpm2`: `"default"` (its own voice) or a saved VoxCPM2 clone; omitted or `null` resolves to `"default"` |
 | `response_format` | string | `mp3` | `mp3`, `wav`, `flac`, or `pcm` |
 | `speed` | float | `1.0` | Reverb: `0.25`–`4.0`, scaling the target length as `1 / speed` (`2.0` is shorter, `0.5` is longer) — see below. `voxcpm2`: must be `1.0` |
-| `model` | string | `""` | `"voxcpm2"` selects the second engine; every other value (including `""`) is Reverb-TTS |
+| `model` | string | *(required)* | A listed TTS engine id: `"reverb-tts"` or `"voxcpm2"`. Missing or empty is a `422`; any other value is a `404` |
 | `language` | string | *(the voice's language)* | Reverb: one of `de`, `en`, `es`, `fr`, `it`, `pl`, `pt`. `voxcpm2`: accepted and ignored |
 | `seed` | integer | *(random)* | Reproducible take when set |
 | `cfg` | float | `2.0` | VoxCPM2 guidance strength, `1.0`–`5.0` (outside that range is a `422`). VoxCPM2 only |
@@ -94,7 +97,7 @@ produced it (`wav`, `mp3` and `flac` carry that rate in the container).
 ```bash
 curl -s -X POST http://localhost:8080/v1/audio/speech \
   -H "Content-Type: application/json" \
-  -d '{"input": "Hello from speakeasy.", "voice": "en_male_narrator_1", "response_format": "wav"}' \
+  -d '{"model": "reverb-tts", "input": "Hello from speakeasy.", "voice": "en_male_narrator_1", "response_format": "wav"}' \
   -o out.wav
 ```
 
@@ -126,14 +129,16 @@ Creates a voice clone from a reference recording and its exact transcript
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
 | `file` | file | *(required)* | Reference audio, ≤ 20 MB, 1–30 s of speech (3–10 s recommended) |
-| `text` | string | *(required)* | The reference's exact transcript |
-| `language` | string | `en` | One of the supported language codes |
+| `text` | string | *(required for Reverb)* | The reference's exact transcript. Required when `model` is `"reverb-tts"`, optional for `"voxcpm2"` |
+| `language` | string | `en` | One of the supported language codes (stored verbatim for `voxcpm2`) |
 | `voice_id` | string | `clone-<hex8>` | `^[a-z0-9][a-z0-9-]{1,63}$`; `409` if it collides |
+| `model` | string | *(required)* | A listed TTS engine id: `"reverb-tts"` or `"voxcpm2"`. Missing or empty is a `422`; any other value is a `404` |
 
 ```bash
 curl -s -X POST http://localhost:8080/v1/audio/voices \
   -H "Authorization: Bearer $SPEAKEASY_API_KEY" \
   -F file=@reference.wav \
+  -F model=reverb-tts \
   -F text="the exact words spoken in reference.wav" \
   -F language=en | jq
 ```
@@ -168,8 +173,11 @@ curl -s -X DELETE -H "Authorization: Bearer $SPEAKEASY_API_KEY" \
 | `GET /health` | Liveness probe |
 | `GET /health/ready` | Readiness probe — 503 until models are loaded |
 
-`GET /v1/models` lists `reverb-tts` once the TTS engine has finished loading
-(the load runs in the background; see [Configuration](#configuration)).
+`GET /v1/models` lists the TTS engine ids by configuration: `reverb-tts` while
+`SPEAKEASY_TTS_ENABLED` is true, `voxcpm2` while `SPEAKEASY_TTS_VOXCPM_ENABLED`
+is true — whether or not the engine has finished loading. A listed engine that
+is still loading answers its own `503`; a disabled one is absent from the
+listing and every request naming it is a `404`.
 
 ### Response headers
 
@@ -181,13 +189,14 @@ Every transcription response carries:
 ## Second TTS engine: VoxCPM2
 
 VoxCPM2 is a second, **opt-in** text-to-speech engine. Reverb-TTS stays the
-default, and nothing changes for a request that does not ask for VoxCPM2.
+primary engine, and nothing changes for a request that does not ask for
+VoxCPM2.
 
 **Selecting it.** Send `"model": "voxcpm2"` on `POST /v1/audio/speech` (or the
-`model` form field on `POST /v1/audio/voices`). Every other `model` value —
-including `""` and OpenAI's `tts-1` names — is Reverb-TTS. `voxcpm2` also
-appears in `GET /v1/models` and as `"voxcpm2"` in `GET /health/ready` while the
-engine is enabled.
+`model` form field on `POST /v1/audio/voices`). `voxcpm2` appears in
+`GET /v1/models` whenever `SPEAKEASY_TTS_VOXCPM_ENABLED` is true, and as
+`"voxcpm2"` in `GET /health/ready` in every state. It is the only other engine
+id Reverb speaks; any other `model` value is a `404`, and there is no default.
 
 ### Request fields
 
@@ -210,8 +219,8 @@ starts with `(` is rejected for the same reason).
 - **`language`** is accepted and ignored — the model needs no language tag and
   covers 30 languages.
 - **`voice`** is `"default"` (the model's own voice) or the id of a saved
-  VoxCPM2 clone; an omitted `voice` resolves to `"default"`. A Reverb preset id
-  is a `400`.
+  VoxCPM2 clone; an omitted or `null` `voice` resolves to `"default"`. A Reverb
+  preset id is a `400`. The field is capped at 64 characters (`422` past that).
 
 ### Voices and clones
 
