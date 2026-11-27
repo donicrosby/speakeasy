@@ -508,7 +508,10 @@ SPEECH_FORMATS = {  # response_format -> (libsndfile format, subtype, content ty
 
 class SpeechRequest(BaseModel):
     input: str = Field(max_length=4096)
-    voice: str = "en_male_narrator_1"
+    # Optional only so a `voxcpm2` request can omit or null it (resolves to
+    # `default`); a Reverb request with a null voice is answered by the route
+    # with the 422 the old `str` annotation produced.
+    voice: str | None = "en_male_narrator_1"
     response_format: Literal["wav", "mp3", "flac", "pcm"] = "mp3"
     speed: float = Field(default=1.0, ge=0.25, le=4.0)  # a length factor; see README
     model: str = ""  # "voxcpm2" selects the second engine; every other value is Reverb
@@ -568,6 +571,10 @@ def speech(req: SpeechRequest):
 
 def _speech_reverb(req: SpeechRequest):
     """Reverb's speech path — unchanged for a request with no new fields."""
+    # A null voice is the 422 the field's old `str` annotation produced; the
+    # optional type a `voxcpm2` request needs must not move Reverb's contract.
+    if req.voice is None:
+        return _null_voice_422()
     if resp := tts_unavailable():
         return resp
     # `cfg`, `design` and `style` are VoxCPM2-only: a set value asks for the
@@ -632,8 +639,13 @@ def _speech_voxcpm2(req: SpeechRequest):
         return _bad_request("speed must be 1.0 for the voxcpm2 engine")
     if req.design is not None and req.style is not None:
         return _bad_request("at most one of design and style may be set")
-    # An omitted `voice` is the model's own voice; an explicit id must be a clone.
-    voice_id = "default" if "voice" not in req.model_fields_set else req.voice
+    # An omitted `voice` is the model's own voice, and an explicit null resolves
+    # to `default` too; any other id must be a saved clone.
+    voice_id = (
+        "default"
+        if "voice" not in req.model_fields_set or req.voice is None
+        else req.voice
+    )
     if req.design is not None and voice_id != "default":
         return _bad_request("design requires voice: 'default'")
     for value in (req.design, req.style):
@@ -760,6 +772,29 @@ def _missing_text_422() -> JSONResponse:
     )
 
 
+def _null_voice_422() -> JSONResponse:
+    """The 422 FastAPI raised for a null `voice` before the field was optional.
+
+    `SpeechRequest.voice` is optional so a `voxcpm2` request can omit or null
+    it; a Reverb request with a null voice must still answer the body the old
+    `str` annotation produced, so it is hand-built here (as `_missing_text_422`
+    does for `text`).
+    """
+    return JSONResponse(
+        status_code=422,
+        content={
+            "detail": [
+                {
+                    "type": "string_type",
+                    "loc": ["body", "voice"],
+                    "msg": "Input should be a valid string",
+                    "input": None,
+                }
+            ]
+        },
+    )
+
+
 def _voice_id_taken(voice_id: str) -> bool:
     """True when either engine's store already owns `voice_id` (ids are shared).
 
@@ -846,9 +881,12 @@ def _create_reverb_voice(
             f"reference is {duration:.1f}s; give it 3-10 s of speech "
             f"({MIN_REFERENCE_SECONDS:g}-{MAX_REFERENCE_SECONDS:g} accepted)"
         )
-    # Serialise only exists-recheck → clone → save under the engine's RLock.
-    # `clone` re-acquires the same lock (reentrant), so the nested acquire is safe.
-    with tts._lock:
+    # Serialise re-check → clone → save under the cross-engine create lock
+    # (`voxcpm2_create_lock`) and the engine's RLock: sharing the create lock
+    # with the VoxCPM2 create path is what makes a same-id create on either
+    # engine exactly one 201 and one 409. `clone` re-acquires the engine lock
+    # (reentrant), so the nested acquire is safe.
+    with voxcpm2_create_lock, tts._lock:
         if _voice_id_taken(voice_id):
             return JSONResponse(
                 status_code=409,

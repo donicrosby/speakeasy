@@ -806,6 +806,44 @@ def test_voxcpm2_voice_omitted_is_default(client, ready_vox):
     assert call["prompt_text"] is None
 
 
+def test_voxcpm2_voice_null_is_default(client, monkeypatch, ready_vox):
+    """An explicit null `voice` resolves to `default`, never the Reverb preset."""
+    reverb = ReverbStub()
+    monkeypatch.setattr(server, "tts", reverb)
+    monkeypatch.setattr(server, "tts_state", "ready")
+
+    r = client.post(
+        "/v1/audio/speech", json={"model": "voxcpm2", "input": "Hi", "voice": None}
+    )
+
+    assert r.status_code == 200
+    assert r.headers["x-speakeasy-engine"] == "voxcpm2"
+    call = ready_vox.calls[-1]
+    assert call["reference"] is None
+    assert call["prompt_text"] is None
+    assert call["cfg"] == 2.0  # null cfg resolves to the engine default
+    assert reverb.calls == []  # the Reverb engine is never touched
+
+
+def test_reverb_voice_null_is_422(client, monkeypatch):
+    """A null `voice` on the Reverb path keeps the exact 422 the field produced.
+
+    The engine is disabled deliberately: on the old `str` annotation the 422
+    came from request validation, before the route ran, so a disabled engine
+    must not turn it into a 503.
+    """
+    monkeypatch.setattr(server, "tts", None)
+    monkeypatch.setattr(server, "tts_state", "disabled")
+
+    r = client.post("/v1/audio/speech", json={"input": "Hi", "voice": None})
+
+    assert r.status_code == 422
+    assert r.text == (
+        '{"detail":[{"type":"string_type","loc":["body","voice"],'
+        '"msg":"Input should be a valid string","input":null}]}'
+    )
+
+
 def test_voxcpm2_reverb_preset_rejected(client, monkeypatch, ready_vox):
     monkeypatch.setattr(server, "voxcpm2_store", StubVoxStore({"clone-saved": None}))
 
@@ -1586,6 +1624,99 @@ def test_voxcpm2_concurrent_clone_create_one_wins(client, monkeypatch, voices_ro
 
     assert sorted(statuses) == [201, 409]
     assert store.exists("clone-race1")
+
+
+class BlockingReverbEngine:
+    """A Reverb stub whose `clone` parks inside the create critical section."""
+
+    name = "reverb-tts"
+    sample_rate = 24000
+    languages = ["en"]
+    load_seconds = 0.0
+
+    def __init__(self):
+        self._lock = threading.RLock()
+        self.clone_entered = threading.Event()
+        self.release_clone = threading.Event()
+
+    def presets(self):
+        return [{"id": "en_male_narrator_1", "language": "en", "transcript": ""}]
+
+    def voice(self, preset_id):
+        return types.SimpleNamespace(language="en")
+
+    def clone(self, samples, sample_rate, text, language):
+        # Hold the create lock here: the re-check to save window is this call.
+        self.clone_entered.set()
+        self.release_clone.wait(10)
+        return ReverbCloneVoice(language=language, text=text)
+
+    def synthesize(self, *a, **k):
+        raise AssertionError("synthesize is not used by this test")
+
+
+def test_concurrent_clone_create_cross_engine_one_wins(
+    client, monkeypatch, voices_root
+):
+    """A Reverb create and a VoxCPM2 create for one id: exactly one 201, one 409.
+
+    The Reverb create is parked in `clone` (between its re-check and its save)
+    before the VoxCPM2 create for the same id starts, so the interleave is
+    deterministic: only a create lock shared by both paths keeps the second
+    create from passing its own both-stores check and saving too.
+    """
+    engine = BlockingReverbEngine()
+    rstore = voices.VoiceStore(voices_root)
+    monkeypatch.setattr(server, "tts", engine)
+    monkeypatch.setattr(server, "tts_state", "ready")
+    monkeypatch.setattr(server, "voices_store", rstore)
+    vstore, _ = _vox_ready(monkeypatch, voices_root)
+
+    reverb_status: list[int] = []
+    vox_status: list[int] = []
+
+    def post_reverb():
+        c = TestClient(server.app)
+        reverb_status.append(
+            _create(
+                c,
+                model="",
+                audio=_wav_bytes(3),
+                text="ref words",
+                voice_id="shared-x",
+            ).status_code
+        )
+
+    def post_vox():
+        c = TestClient(server.app)
+        vox_status.append(
+            _create(c, audio=_wav_bytes(3), text="hi", voice_id="shared-x").status_code
+        )
+
+    t_rev = threading.Thread(target=post_reverb)
+    t_rev.start()
+    t_vox = None
+    try:
+        assert engine.clone_entered.wait(10), "the Reverb create never reached clone"
+
+        t_vox = threading.Thread(target=post_vox)
+        t_vox.start()
+        t_vox.join(0.5)
+        assert t_vox.is_alive(), "the VoxCPM2 create ran inside the Reverb section"
+        assert vstore.exists("shared-x") is False
+    finally:
+        # Never leave the Reverb create parked past the test, whatever failed.
+        engine.release_clone.set()
+
+    t_rev.join(15)
+    if t_vox is not None:
+        t_vox.join(15)
+
+    assert reverb_status == [201] and vox_status == [409]
+    assert rstore.exists("shared-x")
+    # The id is owned by one engine only, so the merged listing shows it once.
+    listed = [o["id"] for o in client.get("/v1/audio/voices").json()["data"]]
+    assert listed.count("shared-x") == 1
 
 
 # --- Delete --------------------------------------------------------------
