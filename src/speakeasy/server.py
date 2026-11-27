@@ -255,8 +255,8 @@ def _voice_objects() -> list[dict]:
     ]
     if voices_store is not None:
         data += [
-            {"id": i, "object": "voice", "type": "clone", **voices_store.info(i)}
-            for i in voices_store.ids()
+            {"id": voice_id, "object": "voice", "type": "clone", **info}
+            for voice_id, info in voices_store.listing()
         ]
     return data
 
@@ -293,7 +293,12 @@ def _bad_request(message: str) -> JSONResponse:
 def _resolve_voice(voice_id: str):
     """A saved clone by id, else a preset. ValueError if neither."""
     if voices_store is not None and voices_store.exists(voice_id):
-        return voices_store.load(voice_id)
+        try:
+            return voices_store.load(voice_id)
+        except FileNotFoundError:
+            # The clone was deleted between the existence check and the read;
+            # fall through and report it exactly like an id never saved.
+            pass
     try:
         return tts.voice(voice_id)
     except ValueError:
@@ -440,15 +445,19 @@ def create_voice(
                 content={"error": {"message": f"voice {voice_id!r} already exists"}},
             )
         voice = tts.clone(samples, tts.sample_rate, transcript, language)
-        voices_store.save(voice_id, voice)
+        created = voices_store.save(voice_id, voice)
     log.info(
         "voice %s created (%.1fs reference, language=%s)", voice_id, duration, language
     )
+    # Built from the values create already holds (and the save's `created`): no
+    # read of the file after the lock, so a concurrent delete cannot break it.
     return {
         "id": voice_id,
         "object": "voice",
         "type": "clone",
-        **voices_store.info(voice_id),
+        "language": language,
+        "transcript": transcript,
+        "created": created,
     }
 
 

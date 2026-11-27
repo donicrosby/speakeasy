@@ -107,6 +107,7 @@ All `/v1/*` endpoints require the bearer token (existing `require_auth`). `/heal
 
 - `data`: presets first (sorted by id), then clones (sorted by id). Presets carry `type: "preset"` and `language`. Clones carry `type: "clone"`, `language`, `transcript`, `created` (Unix seconds, from file mtime).
 - `languages`: the top-level key is the engine's `languages` list so the UI never hardcodes them.
+- Racing a delete: a clone deleted while the listing is built — its file gone between the scan and the read — is simply absent from `data`; the race never turns the response into a 500. Each clone file is read once.
 
 **Response 401** (wrong/missing key): `{"detail": "Invalid or missing API key"}` — existing FastAPI `HTTPException` shape.
 
@@ -140,6 +141,8 @@ All `/v1/*` endpoints require the bearer token (existing `require_auth`). `/heal
 
 **Response 400:** `{"error": {"message": "…"}}` — unknown voice, unsupported language, empty input.
 
+**Response 400 (a clone deleted mid-request):** a saved clone deleted between resolution and load answers the unknown-voice 400 above — the same message, with the id absent from `Known`. A synthesis that already holds the loaded voice finishes normally.
+
 **Response 422:** FastAPI validation error (`speed` out of range, `response_format` not in the enum) — existing Pydantic shape.
 
 **Response 401, 503:** as in 4.1.
@@ -170,6 +173,8 @@ All `/v1/*` endpoints require the bearer token (existing `require_auth`). `/heal
 }
 ```
 
+The body is built from the values create already holds (plus the save's `created` timestamp); it never reads the saved file back, so a clone deleted the instant after the save still answers 201 with a complete body.
+
 **Response 400:** `{"error": {"message": "…"}}` — text empty; unsupported language; invalid `voice_id`; reference under 1 s or over 30 s ("reference is X.Xs; give it 3-10 s of speech (1-30 accepted)"); could not decode the reference audio (message fixed, exception text never leaked).
 
 **Response 409:** `{"error": {"message": "…"}}` — `voice_id` collides with a preset or an existing clone. The create path decodes the reference and validates duration *before* acquiring the engine lock; only the exists re-check, clone, and save are serialized under the engine's `threading.RLock` (nested acquire in `clone` is safe). `VoiceStore.save` uses a unique temporary filename (`.{voice_id}.{uuid}.tmp.npz`) so concurrent requests for the same `voice_id` cannot corrupt the `.npz`: exactly one returns 201, the other 409.
@@ -187,6 +192,8 @@ All `/v1/*` endpoints require the bearer token (existing `require_auth`). `/heal
 ```json
 {"id": "clone-a1b2c3", "object": "voice", "deleted": true}
 ```
+
+Two concurrent `DELETE`s of the same clone both answer this body: the request is "make it gone", and it is, so a delete whose file another request already unlinked still reports success. An id with no saved clone answers 404 as below.
 
 **Response 404:** `{"error": {"message": "no saved voice '…'"}}` — not a saved clone (unknown id, preset, or invalid id).
 
@@ -344,6 +351,8 @@ Every scenario runs without a GPU. Tests fake `reverb_tts` through `sys.modules`
 
 **Scenario: list voices 401 without key.** With `settings.api_key` set. When called without `Authorization`. Then response is 401. **Test:** `test_list_voices_401` (`tests/test_tts.py`).
 
+**Scenario: clone deleted mid-listing is absent.** Given a voices directory whose scan returns a clone id whose file a concurrent `DELETE` has already removed. When `GET /v1/audio/voices` is called. Then response is 200, the vanished clone is absent, each surviving clone is read once — no 500. **Test:** `test_list_voices_skips_a_clone_deleted_mid_listing` (`tests/test_tts.py`).
+
 ### 8.6 Speech
 
 **Scenario: speech returns audio in the requested format.** With a stub engine returning 0.5 s of sine. When `POST /v1/audio/speech` is called with `{"input": "Hi"}`. Then response is 200, `Content-Type: audio/mpeg`, body starts with MP3 magic. Wav → `RIFF`, flac → `fLaC`, pcm → 24000 bytes with `audio/pcm`. **Test:** `test_speech_response_formats` (`tests/test_tts.py`).
@@ -357,6 +366,8 @@ Every scenario runs without a GPU. Tests fake `reverb_tts` through `sys.modules`
 **Scenario: speech 422 on out-of-range speed, invalid format.** Each returns 422 (Pydantic). **Test:** `test_speech_pydantic_validation` (`tests/test_tts.py`).
 
 **Scenario: speech uses saved clone.** Given a `VoiceStore(tmp_path)` with a saved clone. When speech is called with the clone's id. Then the stub engine receives the loaded voice's object. **Test:** `test_speech_with_clone` (`tests/test_tts.py`).
+
+**Scenario: clone deleted between resolution and load.** Given a store whose existence check passes for a clone id but whose `load` finds the file gone. When `POST /v1/audio/speech` is called with that id. Then response is the same 400 as an unknown voice, with the id absent from `Known` — no 500. **Test:** `test_speech_clone_deleted_before_load_is_unknown_voice` (`tests/test_tts.py`).
 
 **Scenario: speech 503, 401.** As in 8.5. **Test:** `test_speech_503_401` (`tests/test_tts.py`).
 
@@ -380,6 +391,8 @@ Every scenario runs without a GPU. Tests fake `reverb_tts` through `sys.modules`
 
 **Scenario: clone 503 when TTS is None.** With `tts=None`. When `POST /v1/audio/voices` is called. Then response is 503 with the appropriate fixed message. **Test:** `test_clone_503` (`tests/test_tts.py`).
 
+**Scenario: clone created, deleted the instant after the save.** Given a store whose save publishes the clone and then loses the file to a concurrent `DELETE`. When `POST /v1/audio/voices` is called. Then response is 201 with a complete body — the body never reads the file back. **Test:** `test_create_voice_body_survives_a_delete_after_save` (`tests/test_tts.py`).
+
 **Scenario: concurrent clone-create same id — one wins.** Given two concurrent `POST /v1/audio/voices` with the same `voice_id`. When both complete. Then exactly one returns 201 with a valid `.npz` on disk, the other returns 409, and the `.npz` loads cleanly (not corrupted by interleaved writes). **Test:** `test_concurrent_clone_create_one_wins` (`tests/test_tts.py`).
 
 **Scenario: engine lock serialises synthesis.** Given a stub engine whose `synthesize` records concurrency (thread count in-flight). When two concurrent `POST /v1/audio/speech` calls are made. Then at most one synthesis is in-flight at any moment. **Test:** `test_engine_lock_serialises_calls` (`tests/test_tts.py`).
@@ -391,6 +404,8 @@ Every scenario runs without a GPU. Tests fake `reverb_tts` through `sys.modules`
 **Scenario: delete 401 without key.** With `settings.api_key` set. When `DELETE /v1/audio/voices/{id}` is called without `Authorization`. Then response is 401. **Test:** `test_delete_401` (`tests/test_tts.py`).
 
 **Scenario: delete 503 when TTS is None.** With `tts=None`. When `DELETE /v1/audio/voices/{id}` is called. Then response is 503. **Test:** `test_delete_503` (`tests/test_tts.py`).
+
+**Scenario: concurrent deletes of the same clone both succeed.** Given a clone whose file a first `DELETE` removed after a second request's existence check passed. When the second `DELETE` is called. Then response is 200 with `deleted: true` — the loser of the race is not a 500. **Test:** `test_delete_of_a_clone_that_vanishes_first` (`tests/test_tts.py`).
 
 ### 8.8 UI
 
