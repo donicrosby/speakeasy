@@ -172,7 +172,7 @@ All `/v1/*` endpoints require the bearer token (existing `require_auth`). `/heal
 
 **Response 400:** `{"error": {"message": "…"}}` — text empty; unsupported language; invalid `voice_id`; reference under 1 s or over 30 s ("reference is X.Xs; give it 3-10 s of speech (1-30 accepted)"); could not decode the reference audio (message fixed, exception text never leaked).
 
-**Response 409:** `{"error": {"message": "…"}}` — `voice_id` collides with a preset or an existing clone. The entire create path (exists check → clone → save) is serialized under the engine lock, and `VoiceStore.save` uses a unique temporary filename (`.{voice_id}.{uuid}.tmp.npz`) so concurrent requests for the same `voice_id` cannot corrupt the `.npz`: exactly one returns 201, the other 409.
+**Response 409:** `{"error": {"message": "…"}}` — `voice_id` collides with a preset or an existing clone. The create path decodes the reference and validates duration *before* acquiring the engine lock; only the exists re-check, clone, and save are serialized under the engine's `threading.RLock` (nested acquire in `clone` is safe). `VoiceStore.save` uses a unique temporary filename (`.{voice_id}.{uuid}.tmp.npz`) so concurrent requests for the same `voice_id` cannot corrupt the `.npz`: exactly one returns 201, the other 409.
 
 **Response 413:** `{"error": {"message": "reference audio over 20 MB"}}` — the raw upload exceeds 20 MB before any decode attempt. Known limitation: the 20 MB check runs after Starlette has spooled the multipart body to disk, same as the existing transcriptions endpoint.
 
@@ -205,6 +205,7 @@ All `/v1/*` endpoints require the bearer token (existing `require_auth`). `/heal
 - **Contents:** `codes` (int16 `[8, frames]`), `text` (the transcript string), `language` (language code string), optional `speech_frames` (int).
 - **Voice id regex:** `^[a-z0-9][a-z0-9-]{1,63}$`. An id is validated before it ever becomes a path; invalid ids are rejected, never sanitized.
 - **Mode:** the voices directory is created with `0o700` at store init.
+- **Note for coder slices:** the brief's Task 1 `voices_dir_default()` snippet appends `/voices` in both branches — the spec's semantics above (set value IS the root) win. Adjust the snippet, don't copy it.
 
 ## 6. Security requirements
 
@@ -222,7 +223,7 @@ Each requirement is named and testable.
 
 6. **SEC-06 — decode failure → 400, no exception text leaked.** Exception caught; message is a fixed string. Test: `test_clone_undecodable_400` (`tests/test_tts.py`, §8.7).
 
-7. **SEC-07 — one operation at a time; clone-create atomic.** `ReverbEngine` holds a `threading.Lock`; `synthesize`, `clone`, and the entire create path (exists check → clone → save) acquire it. The speech and clone-create endpoints are `def` (not `async def`), so FastAPI runs them on a threadpool — the lock blocks a worker thread, never the event loop. `VoiceStore.save` writes to a unique temporary filename (`.{voice_id}.{uuid}.tmp.npz`) then atomically `os.replace`s it into place. Test: `test_engine_lock_serialises_calls` and `test_concurrent_clone_create_one_wins` (`tests/test_tts.py`).
+7. **SEC-07 — one operation at a time; clone-create atomic.** `ReverbEngine` holds a `threading.RLock`; `synthesize` and `clone` acquire it. The create endpoint decodes the reference and validates duration *before* acquiring the engine lock; the locked region covers only the exists re-check, clone, and save — decode never stalls speech inference. Within the locked region `clone` re-acquires the same `RLock` (nested acquire is safe). `VoiceStore.save` writes to a unique temporary filename (`.{voice_id}.{uuid}.tmp.npz`) then atomically `os.replace`s it into place. The speech and clone-create endpoints are `def` (not `async def`), so FastAPI runs them on a threadpool — the lock blocks a worker thread, never the event loop. Test: `test_engine_lock_serialises_calls` and `test_concurrent_clone_create_one_wins` (`tests/test_tts.py`).
 
 8. **SEC-08 — model loads off the startup path.** `start_tts()` spawns a daemon thread; readiness checks only Whisper + Moonshine. Test: `test_ready_reports_loading_while_tts_boots` (`test_tts.py`).
 
@@ -317,6 +318,8 @@ Every scenario runs without a GPU. Tests fake `reverb_tts` through `sys.modules`
 
 **Scenario: delete unknown returns False.** Given an id that was never saved. When `delete()` is called. Then it returns `False`. **Test:** `test_delete_unknown_returns_false` (`tests/test_voices.py`).
 
+**Scenario: corrupt npz skipped in listing.** Given a voices directory containing one valid clone and one garbage `.npz` (not a valid numpy archive). When `GET /v1/audio/voices` is called. Then response is 200; the valid clone is listed; the corrupt file is skipped — no 500. **Test:** `test_corrupt_npz_skipped_in_listing` (`tests/test_voices.py`).
+
 ### 8.4 Lifespan and state
 
 **Scenario: readiness reports TTS state.** With `tts=None` and `tts_state="disabled"`. When `GET /health/ready` is called. Then the response includes `"tts": "disabled"`. **Test:** `test_ready_reports_tts_state` (`tests/test_tts.py`).
@@ -330,6 +333,8 @@ Every scenario runs without a GPU. Tests fake `reverb_tts` through `sys.modules`
 **Scenario: TTS disabled when extra not installed.** With `reverb_tts` absent from `sys.modules`. When `start_tts()` is called. Then `tts_state` is `"disabled"`, no background thread is started, and `tts` remains `None`. When `GET /health/ready` is called. Then the response includes `"tts": "disabled"`. **Test:** `test_tts_disabled_on_import_error` (`tests/test_tts.py`).
 
 **Scenario: ready reports error state.** With `tts=None` and `tts_state="error"`. When `GET /health/ready` is called. Then the response includes `"tts": "error"`. When a TTS endpoint is called. Then the 503 body is the fixed error message (no exception text). **Test:** `test_ready_reports_error_state` (`tests/test_tts.py`).
+
+**Scenario: error bodies contain no exception text.** Given three forced error paths: `tts_state="error"` (503), an undecodable upload (400), and a handler that raises → 500. When each response body is read. Then every body contains only its fixed message; no exception text, stack trace, file path, or URL appears in any response. **Test:** `test_no_exception_text_in_error_bodies` (`tests/test_tts.py`).
 
 ### 8.5 Voice list
 
