@@ -762,6 +762,29 @@ def test_voxcpm2_design_style_mutual_exclusion(client, ready_vox):
     assert ready_vox.calls == []
 
 
+def test_voxcpm2_speech_rejects_invalid_voice_ids(
+    client, monkeypatch, ready_vox, voices_root
+):
+    """A traversal, uppercase, over-long or newline voice id is a 400, never a path.
+
+    The clone lookup validates the id before the store builds anything, so a
+    hostile id must fail like any unknown voice and write nothing.
+    """
+    store = server.ReferenceVoiceStore(voices_root)
+    store.save("clone-ok", np.zeros(16000, dtype=np.float32), 16000, None)
+    monkeypatch.setattr(server, "voxcpm2_store", store)
+
+    for bad in ("../etc/passwd", "A_b", "a" * 65, "clone\n"):
+        r = client.post(
+            "/v1/audio/speech", json={"model": "voxcpm2", "input": "Hi", "voice": bad}
+        )
+        assert r.status_code == 400, bad
+        assert "unknown voice" in r.json()["error"]["message"], bad
+        assert ready_vox.calls == [], bad  # never reached the model
+
+    assert store.ids() == ["clone-ok"]  # the hostile ids stored nothing
+
+
 def test_voxcpm2_voice_default(client, ready_vox):
     r = client.post(
         "/v1/audio/speech", json={"model": "voxcpm2", "input": "Hi", "voice": "default"}
