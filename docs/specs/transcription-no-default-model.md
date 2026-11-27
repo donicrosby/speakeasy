@@ -1,6 +1,6 @@
 # Speakeasy: transcription has no default model
 
-> Spec v1.0. Validated against `main` `301cf43`. Changes the contract of `POST /v1/audio/transcriptions`. Does not touch TTS routes.
+> Spec v1.1. Validated against `main` `301cf43`. Changes the contract of `POST /v1/audio/transcriptions`. Does not touch TTS routes.
 
 ## 1. Goals and non-goals
 
@@ -46,7 +46,7 @@ TTS engine ids (`reverb-tts`, `voxcpm2`) are still returned, unchanged and in th
 
 Three former silent-redirect paths become explicit rejections:
 
-- **(a)** `fast=true` with a Whisper id (`whisper-1` or the configured name) → **400**, fixed message: `"fast=true requires model=moonshine-base"`.
+- **(a)** `fast=true` is an explicit request for Moonshine: with `model=moonshine-base` it is redundant and fine; with a Whisper id (`whisper-1` or the configured name) it is a **400** with the fixed message `"fast=true requires model=moonshine-base"`, never a quiet override.
 - **(b)** `model=moonshine-base` with `language` set to anything but `en` → **400**, fixed message: `"moonshine supports only English (language unset or 'en')"`.
 - **(c)** A Whisper id with `language` unset keeps auto-detecting (unchanged).
 
@@ -54,7 +54,7 @@ A `model` value that is neither a listed transcription id nor a case covered by 
 
 ### T5. Duration auto-route goes, with what served it
 
-The only trigger of the duration auto-route at server.py:1102-1106 (`not model and duration is not None and duration ≤ settings.fast_path_max_seconds`) was the empty `model`. The `probe_duration` call at server.py:1097 is removed from the transcription route because the engines report duration themselves. `probe_duration` (`engines.py:321`) has no other caller (VERIFIED by grep at `main` `301cf43`), so the import is also removed. `fast_path_max_seconds` is removed from `config.py:22` and from `README.md`. **Check:** the setting is absent from the config test's field-enumeration assertion in `tests/test_config.py`.
+The only trigger of the duration auto-route at server.py:1102-1106 (`not model and duration is not None and duration ≤ settings.fast_path_max_seconds`) was the empty `model`. The `probe_duration` call at server.py:1097 is removed from the transcription route because the engines report duration themselves (both result objects carry `duration`: engines.py:97 and engines.py:144). `probe_duration` (`engines.py:321`) has no other caller at `main` `301cf43` — its only occurrences are the definition, the import at server.py:52 and the call at server.py:1097 (F11) — so the import is also removed. `fast_path_max_seconds` is removed from `config.py:22`, from `README.md` (the routing text at line 296 and the env-table row at line 363), and from `README.docker.md` (the env-table row at line 146). **Check:** the setting is absent from the config test's field-enumeration assertion in `tests/test_config.py`.
 
 ### T6. Availability mirrors the TTS rule
 
@@ -124,7 +124,7 @@ When `model` is present but empty:
 
 **404 — Unlisted model (T2):**
 ```json
-{"error": {"message": "unknown model 'typo'd-id...'. Known: whisper-1, large-v3-turbo, moonshine-base"}}
+{"error": {"message": "unknown model 'typo'd-id'. Known: whisper-1, large-v3-turbo, moonshine-base"}}
 ```
 The known-id list names only transcription ids; TTS ids are not repeated. The echoed value is at most 64 characters with `...` when truncated.
 
@@ -177,7 +177,7 @@ Each listed transcription id against each engine availability state, against eac
 | `fast=true` + whisper id | **400** (T4a) — no temp file | **400** (T4a) | **400** (T4a) | **400** (T4a) | **400** (T4a) | **400** (T4a) |
 | `moonshine-base` + `language=de` | **400** (T4b) — no temp file | **400** (T4b) | n/a (already 404) | **400** (T4b) | **400** (T4b) | n/a (already 404) |
 
-**Side effects**: A temp file is written only when an engine runs (200 rows). The transcription route has no engine lock; the engine's own internal synchronisation is unchanged. The 422, 404, 400 and 503 rows read no engine state beyond what is needed for listing (T3), which is configuration only.
+**Side effects**: A temp file is written only when an engine runs (200 rows). The transcription route has no engine lock; the engine's own internal synchronisation is unchanged. The 422, 404 and 400 rows read no engine state at all — the listing they are checked against is configuration only (T3). The 503 rows read only the named engine's failure state (its `None` flag and reason string), never the other engine's. No 422, 404, 400 or 503 row writes a file or takes a lock.
 
 **Before/after — the blanket 503 when Whisper is missing:**
 - **Before** (server.py:1075-1078): every request, whatever the `model`, answers 503 when `whisper is None`.
@@ -209,11 +209,11 @@ The split threshold is a page constant, `LISTEN_MOONSHINE_MAX_SECONDS = 10`. The
 ### Error display
 
 When a non-200 response comes back, the page reads the error body and shows it in `listen-error`:
-- **422:** `model` field is missing or empty. The page shows the detail string.
+- **422:** `model` field is missing or empty. The body is FastAPI's validation `detail` array, which the page's shared error path does not parse; the failure status is shown.
 - **404:** model id is not listed. The page shows the error message.
-- **400:** `fast=true` with wrong model, or `moonshine-base` with wrong language. The page shows the fixed message.
+- **400:** `fast=true` with wrong model, or `moonshine-base` with wrong language. The page shows the fixed message. A 503 shows the named engine's reason string the way the page does today.
 
-The page adds no new UI for the error cases; it shows the server's error text in the existing `listen-error` element.
+The page adds no new UI and no new error parsing for these cases; the server's fixed messages surface through the existing `listen-error` element.
 
 ## 9. Security requirements
 
@@ -224,6 +224,7 @@ Each requirement names the test that fails when it is broken.
 - **SEC-3.** No transcription request reaches an engine it did not name. **Tests:** `test_fast_with_whisper_id_is_400` (formerly a redirect; now 400), `test_moonshine_non_english_is_400` (formerly a redirect; now 400), `test_typo_model_is_404_on_all_states` (typo on every engine availability → 404).
 - **SEC-4.** Removing `fast_path_max_seconds` changes no other setting. **Test:** `test_config_field_names` in `tests/test_config.py` asserts the exact set of Settings field names; the removed field is absent and every other field stays named and at its existing default.
 - **SEC-8.** The diff touches none of `pyproject.toml`, `uv.lock`, `Dockerfile.cuda`, `Dockerfile.rocm`. **Check:** the orchestrator and reviewers verify.
+- **SEC-9.** The page adds no external URL, no inline handler and no content-security-policy change. **Check:** the existing page test that pins the policy header in `tests/test_ui.py` stays green, unchanged.
 
 ## 10. Docs
 
@@ -231,7 +232,7 @@ Each requirement names the test that fails when it is broken.
 
 **Transcription table (§API):** the `model` row changes from `default ""` + "empty string auto-routes" to `*(required)*` + "a listed transcription id from `GET /v1/models`". The `fast` query-param row adds: "only valid with `model=moonshine-base`; otherwise 400".
 
-**Engine routing section (lines 286-304):** replaced with a statement that there is no routing — the `model` field names the engine. The three rules that remain: `model=whisper-1` or the configured name → Whisper; `model=moonshine-base` → Moonshine; any other value → 404.
+**Engine routing section (lines 289-303):** replaced with a statement that there is no routing — the `model` field names the engine. The three rules that remain: `model=whisper-1` or the configured name → Whisper; `model=moonshine-base` → Moonshine; any other value → 404.
 
 **Examples:** each transcription example gains `model` as a required field.
 
@@ -241,11 +242,11 @@ Each requirement names the test that fails when it is broken.
 - `fast=true` with a Whisper model → send `"model": "moonshine-base"` instead.
 - `model=moonshine-base` with a language other than `en` → unset `language`.
 
-**Removed setting:** `SPEAKEASY_FAST_PATH_MAX_SECONDS` is removed; a sentence says it is no longer read.
+**Removed setting:** `SPEAKEASY_FAST_PATH_MAX_SECONDS` is removed (routing text and env-table row); a sentence says it is no longer read. The env-table row in `README.docker.md` (line 146) is removed with it — that file's transcription example already sends `model` and needs no change.
 
 ### Round-trip script
 
-`scripts/tts_roundtrip.py` line 401: the `_multipart` call adds `"model": "whisper-1"` to its form fields.
+`scripts/tts_roundtrip.py` (the `_multipart` call at lines 395-398, the POST at 399-406): the form fields gain `"model": "whisper-1"`.
 
 ## 11. Acceptance scenarios
 
@@ -314,6 +315,7 @@ One coder slice: `feat/transcription-no-default-model`.
 - `src/speakeasy/config.py` — removed `fast_path_max_seconds`
 - `src/speakeasy/static/app.js` — `runTranscription` sends `model`
 - `README.md` — transcription table, routing section, examples, migration note, removed setting
+- `README.docker.md` — the removed setting's env-table row
 - `scripts/tts_roundtrip.py` — transcription call adds `model=whisper-1`
 - `tests/test_server.py` — all server-side acceptance scenarios
 - `tests/test_config.py` — field-name assertion
@@ -325,6 +327,6 @@ Carried from brief §10 items 4 to 6.
 
 1. **`whisper-1` and the configured name both listed (T3).** Settled by the orchestrator (brief §10.4). The owner may overrule after reading the report. Not open for the coder.
 
-2. **The page's ten-second split (T7).** The owner may prefer always Whisper. The cost of always Whisper: a 20 s clip takes ~2-3 s on GPU, ~8-15 s on CPU; with Moonshine the short path is ~0.3 s on CPU. The cost of always Moonshine on short clips: no punctuation. The current split preserves today's behaviour exactly — the server's former default of 10 s is now a page constant. **Settled by the owner** (brief §10.5); the coder builds the split as ruled.
+2. **The page's ten-second split (T7).** The owner may prefer always Whisper. The cost of always Whisper: a 20 s clip takes ~2-3 s on GPU, ~8-15 s on CPU; with Moonshine the short path is ~0.3 s on CPU. The cost of always Moonshine on short clips: no punctuation. The current split preserves today's behaviour exactly — the server's former default of 10 s is now a page constant. **Settled by ruling T7** (the orchestrator); the owner may overrule and prefer always Whisper (brief §10.5); the coder builds the split as ruled.
 
 3. **Callers that relied on the empty default (brief §10.6).** Unknown outside this repository. The README's migration note is the mitigation. **Settled by the owner** — he knows his callers and issued ruling D2 with this consequence known.
