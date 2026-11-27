@@ -436,6 +436,28 @@ function syncCfgDisplay() {
   $("speak-cfg-value").textContent = Number($("speak-cfg").value).toFixed(1);
 }
 
+// An engine the server does not list is never offered: while `/health/ready`
+// reports `voxcpm2` as `disabled`, its option is removed from both selectors.
+function applyEngineAvailability(state) {
+  const disabled = state === "disabled";
+  for (const selectId of ["speak-engine", "clone-engine"]) {
+    const select = $(selectId);
+    const option = Array.from(select.options).find(
+      (item) => item.value === ENGINE_VOXCPM2,
+    );
+    if (!option) continue;
+    option.disabled = disabled;
+    option.hidden = disabled;
+    if (disabled && select.value === ENGINE_VOXCPM2) {
+      select.value = ENGINE_REVERB;
+    }
+  }
+  if (disabled) {
+    applySpeakEngine();
+    applyCloneEngine();
+  }
+}
+
 function syncSpeakDesignStyle() {
   if ($("speak-engine").value !== ENGINE_VOXCPM2) return;
   const design = $("speak-design");
@@ -712,6 +734,9 @@ async function refreshStatus() {
       (body.tts || "?") +
       ", voxcpm2: " +
       (body.voxcpm2 || "?");
+    // A disabled engine is absent from the server's listing, so it is absent
+    // from both selectors too.
+    applyEngineAvailability(body.voxcpm2 || "");
     // The listing answers whenever either engine can supply voices.
     const canList =
       body.tts === "ready" ||

@@ -404,3 +404,20 @@ def test_clone_list_shows_each_engine_and_deletes_both():
     assert "deleteVoice(voice.id)" in body
     # No engine filter: every clone gets its delete button.
     assert "ENGINE_" not in body
+
+
+def test_engine_selector_hides_voxcpm2_when_disabled():
+    """While readiness reports `disabled`, neither selector offers voxcpm2."""
+    js = _read("app.js")
+    availability = _function_body(js, "applyEngineAvailability")
+    assert 'state === "disabled"' in availability
+    for select_id in ("speak-engine", "clone-engine"):
+        assert select_id in availability, select_id
+    # The option is removed from the list, not merely marked: hidden and
+    # disabled both follow the reported state.
+    assert "option.disabled" in availability
+    assert "option.hidden" in availability
+    assert "ENGINE_VOXCPM2" in availability
+    # The rule is applied to what `/health/ready` reports.
+    status = _function_body(js, "refreshStatus")
+    assert "applyEngineAvailability(body.voxcpm2" in status
