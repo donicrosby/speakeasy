@@ -73,7 +73,8 @@ def test_auth_is_off_when_the_key_is_unset(monkeypatch, wav_file):
     c = TestClient(server.app)
     assert c.get("/v1/models").status_code == 200
     files = {"file": ("tone.wav", wav_file.read_bytes(), "audio/wav")}
-    assert c.post("/v1/audio/transcriptions", files=files).status_code == 200
+    r = c.post("/v1/audio/transcriptions", files=files, data={"model": "whisper-1"})
+    assert r.status_code == 200
 
 
 def test_models_without_a_key_is_401(client):
@@ -105,7 +106,12 @@ def test_transcription_demands_the_key(client, wav_file):
     files = {"file": ("tone.wav", wav_file.read_bytes(), "audio/wav")}
     assert client.post("/v1/audio/transcriptions", files=files).status_code == 401
     files["file"] = ("tone.wav", wav_file.read_bytes(), "audio/wav")
-    r = client.post("/v1/audio/transcriptions", files=files, headers=AUTH)
+    r = client.post(
+        "/v1/audio/transcriptions",
+        files=files,
+        data={"model": "whisper-1"},
+        headers=AUTH,
+    )
     assert r.status_code == 200
     assert r.json()["text"] == "stub"
 

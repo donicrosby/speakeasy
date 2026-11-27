@@ -410,7 +410,10 @@ def test_tts_disabled_on_import_error(client, monkeypatch):
     assert server.tts is None
 
     files = {"file": ("tone.wav", _wav_bytes(), "audio/wav")}
-    assert client.post("/v1/audio/transcriptions", files=files).status_code == 200
+    r = client.post(
+        "/v1/audio/transcriptions", files=files, data={"model": "whisper-1"}
+    )
+    assert r.status_code == 200
 
 
 def test_start_tts_is_idempotent(client, fake_reverb, monkeypatch):
