@@ -7,6 +7,8 @@ and no `voxcpm` import are involved.
 """
 
 import json
+import os
+from pathlib import Path
 
 import numpy as np
 import pytest
@@ -129,6 +131,21 @@ def test_invalid_ids_rejected_before_touching_disk(tmp_path, bad_id):
 
     # Nothing was created anywhere, not even the store directory.
     assert {p for p in tmp_path.rglob("*")} == before
+
+
+def test_save_writes_wav_before_json(store, monkeypatch):
+    """The WAV rename publishes before the JSON rename — the JSON is the marker."""
+    order = []
+    real_replace = os.replace
+
+    def recording_replace(src, dst):
+        order.append(Path(dst).suffix)
+        real_replace(src, dst)
+
+    monkeypatch.setattr(voices.os, "replace", recording_replace)
+    store.save("clone-1", _samples(), 16000, None)
+
+    assert order == [".wav", ".json"]
 
 
 def test_delete_twice_and_unknown(store):
