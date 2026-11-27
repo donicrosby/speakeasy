@@ -139,7 +139,7 @@ def test_voxcpm2_engine_cfg_reaches_library(fake_voxcpm):
 
 
 def test_voxcpm2_engine_reference_with_transcript(fake_voxcpm):
-    """A known transcript goes in as continuation audio: prompt_wav_path."""
+    """A known transcript goes in as both reference and continuation audio."""
     e = engines.VoxCPM2Engine("m", "cpu")
 
     e.synthesize("Hi", reference="/voices/voxcpm2/clone-a.wav", prompt_text="words")
@@ -147,7 +147,21 @@ def test_voxcpm2_engine_reference_with_transcript(fake_voxcpm):
     kw = FakeVoxCPM.generate_calls[-1]["kwargs"]
     assert kw["prompt_wav_path"] == "/voices/voxcpm2/clone-a.wav"
     assert kw["prompt_text"] == "words"
-    assert "reference_wav_path" not in kw
+    assert kw["reference_wav_path"] == "/voices/voxcpm2/clone-a.wav"
+
+
+def test_voxcpm2_engine_never_prompts_without_prompt_text(fake_voxcpm):
+    """The library raises on an unpaired prompt, so no mode may send one."""
+    e = engines.VoxCPM2Engine("m", "cpu")
+
+    e.synthesize("Hi")
+    e.synthesize("Hi", reference="/voices/voxcpm2/clone-a.wav")
+    e.synthesize("Hi", reference="/voices/voxcpm2/clone-a.wav", prompt_text="words")
+
+    assert len(FakeVoxCPM.generate_calls) == 3
+    for call in FakeVoxCPM.generate_calls:
+        kwargs = call["kwargs"]
+        assert ("prompt_wav_path" in kwargs) == ("prompt_text" in kwargs)
 
 
 def test_voxcpm2_engine_reference_without_transcript(fake_voxcpm):

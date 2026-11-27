@@ -274,10 +274,12 @@ class VoxCPM2Engine:
     ) -> tuple[np.ndarray, float]:
         """float32 samples at `sample_rate`, and the seconds it took.
 
-        The reference goes in as continuation audio (`prompt_wav_path` with its
-        `prompt_text`) when its transcript is known, and as voice cloning
-        (`reference_wav_path`) when it is not — never both. Raises `BadTake`
-        when the take carries six audio patches or more per text token.
+        The reference goes in as both reference audio (`reference_wav_path`) and
+        continuation audio (`prompt_wav_path` with its `prompt_text`) when its
+        transcript is known, so the reference is isolated behind its own tokens
+        while the prompt audio continues in context. Without a transcript it goes
+        in as voice cloning (`reference_wav_path`) alone. Raises `BadTake` when
+        the take carries six audio patches or more per text token.
         """
         call = {
             "text": text,
@@ -290,11 +292,10 @@ class VoxCPM2Engine:
             "retry_badcase": False,
         }
         if reference is not None:
+            call["reference_wav_path"] = reference
             if prompt_text is not None:
                 call["prompt_wav_path"] = reference
                 call["prompt_text"] = prompt_text
-            else:
-                call["reference_wav_path"] = reference
 
         with self._lock:
             if seed is not None:
