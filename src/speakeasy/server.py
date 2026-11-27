@@ -424,11 +424,40 @@ def _model_ids() -> list[str]:
         ids.append(settings.whisper_model)
     if moonshine is not None:
         ids.append("moonshine-base")
-    if tts is not None:
+    # TTS engines are listed by configuration, not load state: a listed engine
+    # that is not ready answers its own 503, so its name must exist from startup.
+    ids += _listed_tts_engines()
+    return ids
+
+
+def _listed_tts_engines() -> list[str]:
+    """The TTS engine ids this deployment offers, from configuration alone."""
+    ids = []
+    if settings.tts_enabled:
         ids.append("reverb-tts")
-    if voxcpm2_state != "disabled":
+    if settings.tts_voxcpm_enabled:
         ids.append("voxcpm2")
     return ids
+
+
+MODEL_ECHO_CHARS = 64
+
+
+def _unknown_model_404(model: str) -> JSONResponse:
+    """404 for a `model` value this deployment does not list.
+
+    The echoed value is bounded: an unlisted name may be arbitrarily long (a
+    voice string pasted into the wrong field), so only its first characters are
+    quoted back.
+    """
+    echo = model[:MODEL_ECHO_CHARS]
+    if len(model) > MODEL_ECHO_CHARS:
+        echo += "…"
+    known = ", ".join(_listed_tts_engines())
+    return JSONResponse(
+        status_code=404,
+        content={"error": {"message": f"unknown model '{echo}'. Known: {known}"}},
+    )
 
 
 def _reverb_voice_objects() -> list[dict]:
@@ -510,11 +539,14 @@ class SpeechRequest(BaseModel):
     input: str = Field(max_length=4096)
     # Optional only so a `voxcpm2` request can omit or null it (resolves to
     # `default`); a Reverb request with a null voice is answered by the route
-    # with the 422 the old `str` annotation produced.
-    voice: str | None = "en_male_narrator_1"
+    # with the 422 the old `str` annotation produced. The cap keeps an unbounded
+    # string out of a body that names the unknown voice.
+    voice: str | None = Field(default="en_male_narrator_1", max_length=64)
     response_format: Literal["wav", "mp3", "flac", "pcm"] = "mp3"
     speed: float = Field(default=1.0, ge=0.25, le=4.0)  # a length factor; see README
-    model: str = ""  # "voxcpm2" selects the second engine; every other value is Reverb
+    # Required, and it must be an engine this deployment lists: there is no
+    # default engine and no fall-through.
+    model: str = Field(min_length=1)
     language: str | None = None  # default: the voice's language
     seed: int | None = None
     # VoxCPM2-only controls; a set value on a Reverb request is a 400. `cfg`
@@ -564,6 +596,10 @@ def _encode(audio: np.ndarray, fmt: str, sample_rate: int) -> tuple[bytes, str]:
 def speech(req: SpeechRequest):
     # A plain `def`, not `async def`: FastAPI runs it on the threadpool, so the
     # engine lock blocks a worker thread and never the event loop.
+    # The listing check comes first: it reads no engine state and takes no lock,
+    # so an unlisted name answers 404 whatever the engines' states.
+    if req.model not in _listed_tts_engines():
+        return _unknown_model_404(req.model)
     if req.model == "voxcpm2":
         return _speech_voxcpm2(req)
     return _speech_reverb(req)
@@ -827,10 +863,13 @@ def create_voice(
     text: str | None = Form(default=None),
     language: str = Form("en"),
     voice_id: str | None = Form(default=None),
-    model: str = Form(default=""),
+    model: str = Form(..., min_length=1),
 ):
     # A plain `def`: the engine lock blocks a threadpool worker, not the loop.
     # `text` is optional only for VoxCPM2, so required-ness is checked below.
+    # The listing check comes first: no engine state is read, no file is saved.
+    if model not in _listed_tts_engines():
+        return _unknown_model_404(model)
     if model == "voxcpm2":
         return _create_voxcpm2_voice(file, text, language, voice_id)
     return _create_reverb_voice(file, text, language, voice_id)

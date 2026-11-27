@@ -197,12 +197,14 @@ def test_ready_reports_voxcpm2_state(client, monkeypatch):
 
 
 def test_models_lists_voxcpm2(client, monkeypatch):
+    monkeypatch.setattr(server.settings, "tts_voxcpm_enabled", True)
     monkeypatch.setattr(server, "voxcpm2_state", "not_loaded")
     ids = [m["id"] for m in client.get("/v1/models").json()["data"]]
     assert "voxcpm2" in ids
 
 
 def test_models_omits_voxcpm2_when_disabled(client, monkeypatch):
+    monkeypatch.setattr(server.settings, "tts_voxcpm_enabled", False)
     monkeypatch.setattr(server, "voxcpm2_state", "disabled")
     ids = [m["id"] for m in client.get("/v1/models").json()["data"]]
     assert "voxcpm2" not in ids
@@ -680,7 +682,9 @@ def test_voxcpm2_fields_rejected_on_reverb(client, monkeypatch, extra):
     monkeypatch.setattr(server, "tts", ReverbStub())
     monkeypatch.setattr(server, "tts_state", "ready")
 
-    r = client.post("/v1/audio/speech", json={"model": "", "input": "Hi", **extra})
+    r = client.post(
+        "/v1/audio/speech", json={"model": "reverb-tts", "input": "Hi", **extra}
+    )
 
     assert r.status_code == 400
     assert r.json() == {
@@ -774,7 +778,9 @@ def test_voxcpm2_speech_rejects_invalid_voice_ids(
     store.save("clone-ok", np.zeros(16000, dtype=np.float32), 16000, None)
     monkeypatch.setattr(server, "voxcpm2_store", store)
 
-    for bad in ("../etc/passwd", "A_b", "a" * 65, "clone\n"):
+    # The over-length case is request validation now (see `test_voice_max_length`);
+    # the traversal, uppercase and newline ids stay route-level 400s.
+    for bad in ("../etc/passwd", "A_b", "clone\n"):
         r = client.post(
             "/v1/audio/speech", json={"model": "voxcpm2", "input": "Hi", "voice": bad}
         )
@@ -835,7 +841,10 @@ def test_reverb_voice_null_is_422(client, monkeypatch):
     monkeypatch.setattr(server, "tts", None)
     monkeypatch.setattr(server, "tts_state", "disabled")
 
-    r = client.post("/v1/audio/speech", json={"input": "Hi", "voice": None})
+    r = client.post(
+        "/v1/audio/speech",
+        json={"model": "reverb-tts", "input": "Hi", "voice": None},
+    )
 
     assert r.status_code == 422
     assert r.text == (
@@ -1020,7 +1029,10 @@ def test_reverb_response_formats_24k(client, monkeypatch, fmt, media):
     monkeypatch.setattr(server, "tts_state", "ready")
     monkeypatch.setattr(server, "voices_store", None)
 
-    r = client.post("/v1/audio/speech", json={"input": "Hi", "response_format": fmt})
+    r = client.post(
+        "/v1/audio/speech",
+        json={"model": "reverb-tts", "input": "Hi", "response_format": fmt},
+    )
 
     assert r.status_code == 200
     assert r.headers["content-type"] == media
@@ -1037,10 +1049,6 @@ def test_voxcpm2_speech_503_401(client, monkeypatch):
     monkeypatch.setattr(server, "_load_voxcpm2", lambda: None)
 
     for state, message in [
-        (
-            "disabled",
-            "voxcpm2 is disabled; set SPEAKEASY_TTS_VOXCPM_ENABLED=true to enable it",
-        ),
         (
             "not_loaded",
             "voxcpm2 is still loading (first start downloads about 4.7 GB of weights)",
@@ -1135,7 +1143,7 @@ def test_shared_tts_lock_serialises_both_engines(monkeypatch):
     results = []
 
     def reverb():
-        results.append(_post({"input": "Hi"}))
+        results.append(_post({"model": "reverb-tts", "input": "Hi"}))
 
     def vox():
         results.append(_post({"model": "voxcpm2", "input": "Hi", "voice": "default"}))
@@ -1454,7 +1462,7 @@ def test_voxcpm2_clone_during_load(client, monkeypatch, voices_root):
     assert engine.calls == []
 
 
-@pytest.mark.parametrize("state", ["disabled", "error"])
+@pytest.mark.parametrize("state", ["error"])
 def test_voxcpm2_clone_gated_states_503(client, monkeypatch, voices_root, state):
     monkeypatch.setattr(server, "voxcpm2", None)
     monkeypatch.setattr(server, "voxcpm2_store", _vox_store(voices_root))
@@ -1494,7 +1502,11 @@ def test_voxcpm2_clone_id_collides_with_reverb_clone(client, monkeypatch, tmp_pa
     monkeypatch.setattr(server, "voices_store", rstore)
 
     r = _create(
-        client, model="", audio=_wav_bytes(3), text="hello", voice_id="shared-id"
+        client,
+        model="reverb-tts",
+        audio=_wav_bytes(3),
+        text="hello",
+        voice_id="shared-id",
     )
 
     assert r.status_code == 409
@@ -1680,7 +1692,7 @@ def test_concurrent_clone_create_cross_engine_one_wins(
         reverb_status.append(
             _create(
                 c,
-                model="",
+                model="reverb-tts",
                 audio=_wav_bytes(3),
                 text="ref words",
                 voice_id="shared-x",
@@ -2053,3 +2065,151 @@ def test_voxcpm2_clone_deleted_mid_create_leaves_no_listed_orphan(
     listed = [o["id"] for o in raw.get("/v1/audio/voices").json()["data"]]
     assert "clone-race" not in listed
     assert "clone-orphan" not in listed
+
+
+# --- Model selection and voice length ------------------------------------
+
+KNOWN_DEFAULT = "reverb-tts, voxcpm2"
+
+
+@pytest.mark.parametrize(
+    "state", ["disabled", "not_loaded", "loading", "ready", "error"]
+)
+def test_typo_model_speech_404(client, monkeypatch, state):
+    """An unlisted model answers 404 in every state, before any engine is read."""
+    reverb = ReverbStub()
+    vox = SpeechVoxEngine()
+    spawned = []
+    monkeypatch.setattr(server, "tts", reverb)
+    monkeypatch.setattr(server, "tts_state", "ready")
+    monkeypatch.setattr(server, "voxcpm2", vox)
+    monkeypatch.setattr(server, "voxcpm2_state", state)
+    monkeypatch.setattr(server, "_load_voxcpm2", lambda: spawned.append(1))
+
+    r = client.post(
+        "/v1/audio/speech", json={"model": "voxpcm2", "input": "Hi", "voice": "default"}
+    )
+
+    assert r.status_code == 404
+    assert r.json() == {
+        "error": {"message": f"unknown model 'voxpcm2'. Known: {KNOWN_DEFAULT}"}
+    }
+    assert reverb.calls == [] and vox.calls == []
+    assert spawned == []
+    assert server.voxcpm2_state == state
+
+
+@pytest.mark.parametrize(
+    "state", ["disabled", "not_loaded", "loading", "ready", "error"]
+)
+def test_typo_model_clone_create_404(client, monkeypatch, voices_root, state):
+    """An unlisted model on clone create is 404 before anything is written."""
+    engine = SpeechVoxEngine()
+    spawned = []
+    monkeypatch.setattr(server, "voxcpm2", engine)
+    monkeypatch.setattr(server, "voxcpm2_state", state)
+    monkeypatch.setattr(server, "_load_voxcpm2", lambda: spawned.append(1))
+
+    r = _create(client, model="voxcpm", audio=_wav_bytes(3), voice_id="clone-typo")
+
+    assert r.status_code == 404
+    assert r.json() == {
+        "error": {"message": f"unknown model 'voxcpm'. Known: {KNOWN_DEFAULT}"}
+    }
+    assert engine.calls == []
+    assert spawned == []
+    assert not voices_root.exists()
+    assert server.voxcpm2_state == state
+
+
+def test_model_missing_empty_422(client):
+    for body in (
+        {"input": "Hi"},
+        {"model": "", "input": "Hi"},
+    ):
+        r = client.post("/v1/audio/speech", json=body)
+        assert r.status_code == 422, body
+        assert any(e["loc"][-1] == "model" for e in r.json()["detail"]), body
+
+    files = {"file": ("ref.wav", _wav_bytes(3), "audio/wav")}
+    r = client.post("/v1/audio/voices", files=files)
+    assert r.status_code == 422
+    assert any(e["loc"][-1] == "model" for e in r.json()["detail"])
+
+    r = client.post("/v1/audio/voices", files=files, data={"model": ""})
+    assert r.status_code == 422
+    assert any(e["loc"][-1] == "model" for e in r.json()["detail"])
+
+
+def test_voice_max_length(client, monkeypatch, ready_vox, voices_root):
+    """65 characters is request validation; 64 reaches voice resolution."""
+    store = server.ReferenceVoiceStore(voices_root)
+    monkeypatch.setattr(server, "voxcpm2_store", store)
+    # A supplied path so nothing outside the temp dir is touched.
+    store.save("clone-ok", np.zeros(16000, dtype=np.float32), 16000, None)
+
+    r = client.post(
+        "/v1/audio/speech",
+        json={"model": "voxcpm2", "input": "Hi", "voice": "a" * 65},
+    )
+    assert r.status_code == 422
+    assert any(e["loc"][-1] == "voice" for e in r.json()["detail"])
+    assert ready_vox.calls == []
+
+    r = client.post(
+        "/v1/audio/speech",
+        json={"model": "voxcpm2", "input": "Hi", "voice": "a" * 64},
+    )
+    assert r.status_code == 400
+    assert "unknown voice" in r.json()["error"]["message"]
+    assert ready_vox.calls == []  # a 64-character unknown id never reaches the model
+
+
+def test_voxcpm2_disabled_unlisted_404(client, monkeypatch, voices_root):
+    monkeypatch.setattr(server.settings, "tts_voxcpm_enabled", False)
+    monkeypatch.setattr(server, "voxcpm2_state", "disabled")
+    monkeypatch.setattr(server, "voxcpm2", None)
+    spawned = []
+    monkeypatch.setattr(server, "_load_voxcpm2", lambda: spawned.append(1))
+
+    ids = [m["id"] for m in client.get("/v1/models").json()["data"]]
+    assert "voxcpm2" not in ids
+
+    r = client.post("/v1/audio/speech", json={"model": "voxcpm2", "input": "Hi"})
+    assert r.status_code == 404
+    assert r.json() == {
+        "error": {"message": "unknown model 'voxcpm2'. Known: reverb-tts"}
+    }
+
+    r = _create(client, audio=_wav_bytes(3), voice_id="clone-disabled")
+    assert r.status_code == 404
+    assert r.json() == {
+        "error": {"message": "unknown model 'voxcpm2'. Known: reverb-tts"}
+    }
+    assert not voices_root.exists()
+    assert spawned == []
+
+
+def test_models_lists_both_when_unloaded(client, monkeypatch):
+    """Neither engine is loaded, yet both are listed by configuration."""
+    monkeypatch.setattr(server.settings, "tts_enabled", True)
+    monkeypatch.setattr(server.settings, "tts_voxcpm_enabled", True)
+    monkeypatch.setattr(server, "tts", None)
+    monkeypatch.setattr(server, "tts_state", "disabled")
+    monkeypatch.setattr(server, "voxcpm2_state", "not_loaded")
+
+    ids = [m["id"] for m in client.get("/v1/models").json()["data"]]
+
+    assert ids[-2:] == ["reverb-tts", "voxcpm2"]
+
+
+def test_unknown_model_truncates_value(client):
+    """The 404 body echoes at most 64 characters of the unlisted value."""
+    long_model = "m" * 100
+
+    r = client.post("/v1/audio/speech", json={"model": long_model, "input": "Hi"})
+
+    assert r.status_code == 404
+    assert r.json() == {
+        "error": {"message": f"unknown model '{'m' * 64}…'. Known: {KNOWN_DEFAULT}"}
+    }
