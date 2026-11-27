@@ -806,6 +806,44 @@ def test_voxcpm2_voice_omitted_is_default(client, ready_vox):
     assert call["prompt_text"] is None
 
 
+def test_voxcpm2_voice_null_is_default(client, monkeypatch, ready_vox):
+    """An explicit null `voice` resolves to `default`, never the Reverb preset."""
+    reverb = ReverbStub()
+    monkeypatch.setattr(server, "tts", reverb)
+    monkeypatch.setattr(server, "tts_state", "ready")
+
+    r = client.post(
+        "/v1/audio/speech", json={"model": "voxcpm2", "input": "Hi", "voice": None}
+    )
+
+    assert r.status_code == 200
+    assert r.headers["x-speakeasy-engine"] == "voxcpm2"
+    call = ready_vox.calls[-1]
+    assert call["reference"] is None
+    assert call["prompt_text"] is None
+    assert call["cfg"] == 2.0  # null cfg resolves to the engine default
+    assert reverb.calls == []  # the Reverb engine is never touched
+
+
+def test_reverb_voice_null_is_422(client, monkeypatch):
+    """A null `voice` on the Reverb path keeps the exact 422 the field produced.
+
+    The engine is disabled deliberately: on the old `str` annotation the 422
+    came from request validation, before the route ran, so a disabled engine
+    must not turn it into a 503.
+    """
+    monkeypatch.setattr(server, "tts", None)
+    monkeypatch.setattr(server, "tts_state", "disabled")
+
+    r = client.post("/v1/audio/speech", json={"input": "Hi", "voice": None})
+
+    assert r.status_code == 422
+    assert r.text == (
+        '{"detail":[{"type":"string_type","loc":["body","voice"],'
+        '"msg":"Input should be a valid string","input":null}]}'
+    )
+
+
 def test_voxcpm2_reverb_preset_rejected(client, monkeypatch, ready_vox):
     monkeypatch.setattr(server, "voxcpm2_store", StubVoxStore({"clone-saved": None}))
 
