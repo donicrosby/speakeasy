@@ -87,6 +87,16 @@ textarea {
   resize: vertical;
 }
 
+/* The `hidden` attribute must win over the layout rules above (label, div). */
+[hidden] {
+  display: none !important;
+}
+
+output {
+  margin-left: 0.4rem;
+  color: var(--fg);
+}
+
 button {
   padding: 0.35rem 0.7rem;
   margin-right: 0.4rem;
