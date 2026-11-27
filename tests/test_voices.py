@@ -126,12 +126,15 @@ def test_corrupt_npz_skipped_in_listing(store):
 
     # Building the listing shape slice 3 will return must not raise.
     listed = [{"id": i, **store.info(i)} for i in store.ids()]
+    # `created` is the clone file's mtime, not whatever `listed` happened to
+    # hold — comparing it to itself proved nothing.
+    created = int((store.root / "good-1.npz").stat().st_mtime)
     assert listed == [
         {
             "id": "good-1",
             "language": "en",
             "transcript": "fine",
-            "created": listed[0]["created"],
+            "created": created,
         }
     ]
 
