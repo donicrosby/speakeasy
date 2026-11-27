@@ -1178,7 +1178,12 @@ def test_delete_clone(client, clone_engine, clone_store):
     clone_store.save("clone-del1", ServerVoice(text="bye"))
     r = client.delete("/v1/audio/voices/clone-del1")
     assert r.status_code == 200
-    assert r.json() == {"id": "clone-del1", "object": "voice", "deleted": True}
+    assert r.json() == {
+        "id": "clone-del1",
+        "object": "voice",
+        "deleted": True,
+        "engine": "reverb-tts",
+    }
     assert not clone_store.exists("clone-del1")
     listed = [d["id"] for d in client.get("/v1/audio/voices").json()["data"]]
     assert "clone-del1" not in listed
@@ -1235,4 +1240,9 @@ def test_delete_of_a_clone_that_vanishes_first(clone_engine, clone_store, monkey
     r = raw.delete("/v1/audio/voices/clone-race1")
 
     assert r.status_code == 200
-    assert r.json() == {"id": "clone-race1", "object": "voice", "deleted": True}
+    assert r.json() == {
+        "id": "clone-race1",
+        "object": "voice",
+        "deleted": True,
+        "engine": "reverb-tts",
+    }

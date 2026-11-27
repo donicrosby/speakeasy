@@ -7,19 +7,23 @@ scenarios are added by later slices. The `voxcpm` package is faked through
 `tts` nor the `tts-voxcpm` extra is installed.
 """
 
+import io
 import json
 import struct
 import sys
 import threading
 import time
 import types
+import wave
 
 import numpy as np
 import pytest
+import soundfile as sf
 import torch
 from fastapi.testclient import TestClient
 
 import speakeasy.server as server
+from speakeasy import voices
 from speakeasy.engines import BadTake
 
 
@@ -64,6 +68,7 @@ def voxcpm2_state_reset(monkeypatch):
     monkeypatch.setattr(server, "voxcpm2_last_used", 0.0)
     monkeypatch.setattr(server, "tts_lock", threading.Lock())
     monkeypatch.setattr(server, "voxcpm2_state_lock", threading.Lock())
+    monkeypatch.setattr(server, "voxcpm2_create_lock", threading.Lock())
     yield
 
 
@@ -542,8 +547,8 @@ class ReverbStub:
 
     def presets(self):
         return [
-            {"id": "en_male_narrator_1", "language": "en", "transcript": ""},
             {"id": "de_female_standard", "language": "de", "transcript": ""},
+            {"id": "en_male_narrator_1", "language": "en", "transcript": ""},
         ]
 
     def voice(self, preset_id):
@@ -1188,3 +1193,618 @@ def test_voxcpm2_speech_state_recheck_under_lock(monkeypatch):
     }
     assert engine.calls == []  # never reached a model call
     assert server.voxcpm2_state == "loading"  # a new single-flight load started
+
+
+# ---------------------------------------------------------------------------
+# Clone routes — create, delete and the voice listing for both engines
+# ---------------------------------------------------------------------------
+
+VOXCPM2_RATE = 16000
+
+
+def _wav_bytes(seconds=3.0, sr=16000):
+    buf = io.BytesIO()
+    with wave.open(buf, "w") as wf:
+        wf.setnchannels(1)
+        wf.setsampwidth(2)
+        wf.setframerate(sr)
+        wf.writeframes(b"\x00\x00" * int(sr * seconds))
+    return buf.getvalue()
+
+
+class ReverbCloneVoice:
+    """Mirrors `reverb_tts.Voice`'s `.npz` format without the package."""
+
+    def __init__(self, language="en", text="ref words"):
+        self.language, self.text = language, text
+
+    def save(self, path):
+        np.savez(
+            path,
+            codes=np.zeros((8, 250), np.int16),
+            text=self.text,
+            language=self.language,
+        )
+
+
+def _vox_store(root):
+    return server.ReferenceVoiceStore(root)
+
+
+def _vox_ready(monkeypatch, root, *, engine=None):
+    """A ready VoxCPM2 stub with a live clone store on disk."""
+    store = _vox_store(root)
+    engine = engine if engine is not None else SpeechVoxEngine()
+    monkeypatch.setattr(server, "voxcpm2", engine)
+    monkeypatch.setattr(server, "voxcpm2_store", store)
+    monkeypatch.setattr(server, "voxcpm2_state", "ready")
+    return store, engine
+
+
+def _create(
+    client, *, model="voxcpm2", audio=None, text=None, language="en", voice_id=None
+):
+    form = {"model": model, "language": language}
+    if text is not None:
+        form["text"] = text
+    if voice_id is not None:
+        form["voice_id"] = voice_id
+    files = {
+        "file": ("ref.wav", _wav_bytes(3) if audio is None else audio, "audio/wav")
+    }
+    return client.post("/v1/audio/voices", files=files, data=form)
+
+
+# --- Clone create --------------------------------------------------------
+
+
+def test_voxcpm2_clone_create_stores_only(client, monkeypatch, voices_root):
+    """201 with `engine: voxcpm2`; the WAV and JSON land on disk; no model runs."""
+    store, engine = _vox_ready(monkeypatch, voices_root)
+
+    r = _create(
+        client, audio=_wav_bytes(3), text="the exact words", voice_id="clone-abc"
+    )
+
+    assert r.status_code == 201
+    body = r.json()
+    assert body["id"] == "clone-abc"
+    assert body["object"] == "voice"
+    assert body["type"] == "clone"
+    assert body["engine"] == "voxcpm2"
+    assert body["language"] == "en"
+    assert body["transcript"] == "the exact words"
+    assert isinstance(body["created"], int)
+
+    assert (store.root / "clone-abc.wav").is_file()
+    assert (store.root / "clone-abc.json").is_file()
+    data, sr = sf.read(store.root / "clone-abc.wav")
+    assert sr == 16000 and data.ndim == 1 and len(data) == 16000 * 3
+    assert engine.calls == []  # no model ran at create time
+
+
+def test_voxcpm2_clone_create_no_text_ok(client, monkeypatch, voices_root):
+    """`text` is optional: the clone stores with a null transcript."""
+    store, _ = _vox_ready(monkeypatch, voices_root)
+
+    r = _create(client, text=None, voice_id="clone-notext")
+
+    assert r.status_code == 201
+    assert r.json()["transcript"] is None
+    assert r.json()["engine"] == "voxcpm2"
+    assert store.exists("clone-notext")
+    assert store.info("clone-notext")["transcript"] is None
+
+
+def test_voxcpm2_clone_language_stored_verbatim(client, monkeypatch, voices_root):
+    """`language` is stored as sent, never validated against Reverb's codes."""
+    store, _ = _vox_ready(monkeypatch, voices_root)
+
+    r = _create(client, text="hi", language="xx", voice_id="clone-lang")
+
+    assert r.status_code == 201
+    assert r.json()["language"] == "xx"
+    assert store.info("clone-lang")["language"] == "xx"
+
+
+def test_voxcpm2_clone_create_body_not_read_back(client, monkeypatch, voices_root):
+    """The 201 body is built from values held in the request, never read back."""
+
+    class NoReadBackStore(server.ReferenceVoiceStore):
+        def info(self, voice_id):
+            raise AssertionError("the 201 body must not read the clone back")
+
+    monkeypatch.setattr(server, "voxcpm2", SpeechVoxEngine())
+    monkeypatch.setattr(server, "voxcpm2_store", NoReadBackStore(voices_root))
+    monkeypatch.setattr(server, "voxcpm2_state", "ready")
+
+    r = _create(client, text="hi", voice_id="clone-nrb")
+
+    assert r.status_code == 201
+    assert r.json()["id"] == "clone-nrb"
+
+
+def test_voxcpm2_clone_upload_limits(client, monkeypatch, voices_root):
+    """Reverb's limits: 20 MB, 1-30 s, a fixed 400 on a decode failure."""
+    store, _ = _vox_ready(monkeypatch, voices_root)
+
+    r = _create(
+        client,
+        audio=b"\x00" * (server.MAX_REFERENCE_BYTES + 1),
+        text="hi",
+        voice_id="clone-big",
+    )
+    assert r.status_code == 413
+
+    r = _create(client, audio=_wav_bytes(0.5), text="hi", voice_id="clone-short")
+    assert r.status_code == 400
+
+    r = _create(client, audio=_wav_bytes(31), text="hi", voice_id="clone-long")
+    assert r.status_code == 400
+
+    r = _create(
+        client, audio=b"this is not audio at all", text="hi", voice_id="clone-bad"
+    )
+    assert r.status_code == 400
+    for leak in ("InvalidDataError", "av.", "Traceback", "/tmp"):
+        assert leak not in r.text
+    assert store.ids() == []  # nothing was stored
+
+
+def test_invalid_voxcpm2_voice_ids_rejected(client, monkeypatch, voices_root):
+    store, _ = _vox_ready(monkeypatch, voices_root)
+
+    for bad in ("../etc/passwd", "En_X", "a", "a" * 65, "clone\n"):
+        r = _create(client, text="hi", voice_id=bad)
+        assert r.status_code == 400, bad
+        assert "invalid voice id" in r.json()["error"]["message"]
+
+    assert store.ids() == []
+
+
+def test_voxcpm2_clone_during_load(client, monkeypatch, voices_root):
+    """Clone-create is gated by the engine state; `not_loaded` starts the load."""
+    store = _vox_store(voices_root)
+    monkeypatch.setattr(server, "voxcpm2_store", store)
+
+    monkeypatch.setattr(server, "voxcpm2_state", "loading")
+    r = _create(client, text="hi", voice_id="clone-load1")
+    assert r.status_code == 503
+    assert r.json() == {"error": {"message": server.VOXCPM2_503_REASONS["loading"]}}
+    assert store.ids() == []  # the gate runs before anything is written
+
+    spawned = []
+    monkeypatch.setattr(server, "_load_voxcpm2", lambda: spawned.append(1))
+    monkeypatch.setattr(server, "voxcpm2_state", "not_loaded")
+    r = _create(client, text="hi", voice_id="clone-load2")
+    assert r.status_code == 503
+    assert r.json() == {"error": {"message": server.VOXCPM2_503_REASONS["not_loaded"]}}
+    assert server.voxcpm2_state == "loading"  # the single-flight load started
+    deadline = time.monotonic() + 2
+    while not spawned and time.monotonic() < deadline:
+        time.sleep(0.01)
+    assert spawned == [1]
+
+    engine = SpeechVoxEngine()
+    monkeypatch.setattr(server, "voxcpm2", engine)
+    monkeypatch.setattr(server, "voxcpm2_state", "ready")
+    r = _create(client, audio=_wav_bytes(3), text="hi", voice_id="clone-load3")
+    assert r.status_code == 201
+    assert engine.calls == []
+
+
+@pytest.mark.parametrize("state", ["disabled", "error"])
+def test_voxcpm2_clone_gated_states_503(client, monkeypatch, voices_root, state):
+    monkeypatch.setattr(server, "voxcpm2", None)
+    monkeypatch.setattr(server, "voxcpm2_store", _vox_store(voices_root))
+    monkeypatch.setattr(server, "voxcpm2_state", state)
+
+    r = _create(client, text="hi", voice_id="clone-gated")
+
+    assert r.status_code == 503
+    assert r.json() == {"error": {"message": server.VOXCPM2_503_REASONS[state]}}
+
+
+def test_voxcpm2_clone_cross_engine_collision(client, monkeypatch, tmp_path):
+    """A Reverb clone's id is 409 for a VoxCPM2 create."""
+    root = tmp_path / "voices"
+    rstore = voices.VoiceStore(root)
+    rstore.save("shared-id", ReverbCloneVoice())
+    monkeypatch.setattr(server, "tts", ReverbStub())
+    monkeypatch.setattr(server, "tts_state", "ready")
+    monkeypatch.setattr(server, "voices_store", rstore)
+    store, _ = _vox_ready(monkeypatch, root)
+
+    r = _create(client, text="hi", voice_id="shared-id")
+
+    assert r.status_code == 409
+    assert store.exists("shared-id") is False
+
+
+def test_voxcpm2_clone_id_collides_with_reverb_clone(client, monkeypatch, tmp_path):
+    """The reverse: a VoxCPM2 clone's id is 409 for a Reverb create."""
+    root = tmp_path / "voices"
+    store, _ = _vox_ready(monkeypatch, root)
+    store.save("shared-id", np.zeros(16000, dtype=np.float32), 16000, None)
+
+    rstore = voices.VoiceStore(root)
+    monkeypatch.setattr(server, "tts", ReverbStub())
+    monkeypatch.setattr(server, "tts_state", "ready")
+    monkeypatch.setattr(server, "voices_store", rstore)
+
+    r = _create(
+        client, model="", audio=_wav_bytes(3), text="hello", voice_id="shared-id"
+    )
+
+    assert r.status_code == 409
+    assert rstore.exists("shared-id") is False
+
+
+def test_voxcpm2_clone_preset_name_409(client, monkeypatch, voices_root):
+    store, _ = _vox_ready(monkeypatch, voices_root)
+    monkeypatch.setattr(server, "tts", ReverbStub())
+    monkeypatch.setattr(server, "tts_state", "ready")
+
+    r = _create(client, text="hi", voice_id="en_male_narrator_1")
+
+    assert r.status_code == 409
+    assert r.json() == {"error": {"message": "'en_male_narrator_1' is a preset voice"}}
+    assert store.ids() == []
+
+
+def test_voxcpm2_concurrent_clone_create_one_wins(client, monkeypatch, voices_root):
+    """Two same-id creates: one 201, one 409, serialized by the create lock."""
+    store, _ = _vox_ready(monkeypatch, voices_root)
+    barrier = threading.Barrier(2)
+    statuses = []
+
+    def post():
+        barrier.wait(5)
+        c = TestClient(server.app)
+        r = _create(c, audio=_wav_bytes(3), text="hi", voice_id="clone-race1")
+        statuses.append(r.status_code)
+
+    threads = [threading.Thread(target=post) for _ in range(2)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join(15)
+
+    assert sorted(statuses) == [201, 409]
+    assert store.exists("clone-race1")
+
+
+# --- Delete --------------------------------------------------------------
+
+
+def test_delete_returns_engine(client, monkeypatch, voices_root, tmp_path):
+    """Delete resolves by id alone and names the owning engine."""
+    store = _vox_store(voices_root)
+    store.save("clone-vox", np.zeros(16000, dtype=np.float32), 16000, None)
+    monkeypatch.setattr(server, "voxcpm2_store", store)
+    monkeypatch.setattr(server, "voxcpm2_state", "not_loaded")  # no engine needed
+
+    r = client.delete("/v1/audio/voices/clone-vox")
+    assert r.status_code == 200
+    assert r.json() == {
+        "id": "clone-vox",
+        "object": "voice",
+        "deleted": True,
+        "engine": "voxcpm2",
+    }
+    assert not store.exists("clone-vox")
+
+    rstore = voices.VoiceStore(tmp_path / "reverb")
+    rstore.save("clone-rev", ReverbCloneVoice())
+    monkeypatch.setattr(server, "tts", ReverbStub())
+    monkeypatch.setattr(server, "tts_state", "ready")
+    monkeypatch.setattr(server, "voices_store", rstore)
+
+    r = client.delete("/v1/audio/voices/clone-rev")
+    assert r.status_code == 200
+    assert r.json() == {
+        "id": "clone-rev",
+        "object": "voice",
+        "deleted": True,
+        "engine": "reverb-tts",
+    }
+
+
+def test_delete_checks_both_stores(client, monkeypatch, tmp_path):
+    monkeypatch.setattr(server, "voxcpm2_store", _vox_store(tmp_path / "voices"))
+    monkeypatch.setattr(server, "voxcpm2_state", "ready")
+    monkeypatch.setattr(server, "tts", ReverbStub())
+    monkeypatch.setattr(server, "tts_state", "ready")
+    monkeypatch.setattr(server, "voices_store", voices.VoiceStore(tmp_path / "voices"))
+
+    r = client.delete("/v1/audio/voices/never-saved")
+    assert r.status_code == 404
+    assert r.json() == {"error": {"message": "no saved voice 'never-saved'"}}
+
+
+def test_delete_voxcpm2_leaves_reverb_store_untouched(client, monkeypatch, tmp_path):
+    root = tmp_path / "voices"
+    vstore = _vox_store(root)
+    vstore.save("clone-vox", np.zeros(16000, dtype=np.float32), 16000, None)
+    rstore = voices.VoiceStore(root)
+    rstore.save("clone-rev", ReverbCloneVoice())
+    monkeypatch.setattr(server, "voxcpm2_store", vstore)
+    monkeypatch.setattr(server, "voxcpm2_state", "ready")
+    monkeypatch.setattr(server, "tts", ReverbStub())
+    monkeypatch.setattr(server, "tts_state", "ready")
+    monkeypatch.setattr(server, "voices_store", rstore)
+
+    r = client.delete("/v1/audio/voices/clone-vox")
+
+    assert r.status_code == 200 and r.json()["engine"] == "voxcpm2"
+    assert vstore.exists("clone-vox") is False
+    assert rstore.exists("clone-rev")  # the other engine's store is untouched
+
+
+def test_voxcpm2_delete_of_a_clone_that_vanishes_first(
+    client, monkeypatch, voices_root
+):
+    """The loser of two concurrent deletes still answers 200, not a 500."""
+    store = _vox_store(voices_root)
+    store.save("clone-race1", np.zeros(16000, dtype=np.float32), 16000, None)
+
+    class VanishedDeleteStore(server.ReferenceVoiceStore):
+        def exists(self, voice_id):
+            if voice_id == "clone-race1":
+                # Both requests passed the check against a present clone; the
+                # other request's unlink landed first.
+                self.delete(voice_id)
+                return True
+            return super().exists(voice_id)
+
+    monkeypatch.setattr(server, "voxcpm2_store", VanishedDeleteStore(voices_root))
+    monkeypatch.setattr(server, "voxcpm2_state", "ready")
+
+    raw = TestClient(server.app, raise_server_exceptions=False)
+    r = raw.delete("/v1/audio/voices/clone-race1")
+
+    assert r.status_code == 200
+    assert r.json()["engine"] == "voxcpm2"
+
+
+# --- Voice listing -------------------------------------------------------
+
+
+def test_list_voices_both_engines(client, monkeypatch, tmp_path):
+    root = tmp_path / "voices"
+    rstore = voices.VoiceStore(root)
+    rstore.save("clone-rev1", ReverbCloneVoice(language="de", text="hallo"))
+    monkeypatch.setattr(server, "tts", ReverbStub())
+    monkeypatch.setattr(server, "tts_state", "ready")
+    monkeypatch.setattr(server, "voices_store", rstore)
+    vstore, _ = _vox_ready(monkeypatch, root)
+    vstore.save(
+        "clone-vox1", np.zeros(16000, dtype=np.float32), 16000, "hello", language="en"
+    )
+
+    r = client.get("/v1/audio/voices")
+    assert r.status_code == 200
+    body = r.json()
+    assert body["engines"] == ["reverb-tts", "voxcpm2"]
+    assert body["languages"] == ["de", "en"]
+    assert all("engine" in obj for obj in body["data"])
+    assert [o["id"] for o in body["data"]] == [
+        "de_female_standard",
+        "en_male_narrator_1",
+        "clone-rev1",
+        "clone-vox1",
+    ]
+    rev = next(o for o in body["data"] if o["id"] == "clone-rev1")
+    assert rev["engine"] == "reverb-tts"
+    vox = next(o for o in body["data"] if o["id"] == "clone-vox1")
+    assert vox["engine"] == "voxcpm2"
+    assert vox["language"] == "en"
+    assert vox["transcript"] == "hello"
+    assert isinstance(vox["created"], int)
+
+
+def test_list_voices_clones_of_both_engines_sorted_by_id(client, monkeypatch, tmp_path):
+    root = tmp_path / "voices"
+    rstore = voices.VoiceStore(root)
+    for vid in ("clone-b", "clone-a"):
+        rstore.save(vid, ReverbCloneVoice())
+    monkeypatch.setattr(server, "tts", ReverbStub())
+    monkeypatch.setattr(server, "tts_state", "ready")
+    monkeypatch.setattr(server, "voices_store", rstore)
+    vstore, _ = _vox_ready(monkeypatch, root)
+    for vid in ("clone-d", "clone-c"):
+        vstore.save(vid, np.zeros(16000, dtype=np.float32), 16000, None)
+
+    ids = [o["id"] for o in client.get("/v1/audio/voices").json()["data"]]
+
+    # Presets first, then Reverb clones, then VoxCPM2 clones, each sorted by id.
+    assert ids == [
+        "de_female_standard",
+        "en_male_narrator_1",
+        "clone-a",
+        "clone-b",
+        "clone-c",
+        "clone-d",
+    ]
+
+
+def test_list_voices_mixed_states(client, monkeypatch, voices_root):
+    """Reverb loading: its presets are absent, VoxCPM2 clones present."""
+    monkeypatch.setattr(server, "tts", None)
+    monkeypatch.setattr(server, "tts_state", "loading")
+    store = _vox_store(voices_root)
+    store.save(
+        "clone-vox1", np.zeros(16000, dtype=np.float32), 16000, "hello", language="en"
+    )
+    monkeypatch.setattr(server, "voxcpm2_store", store)
+    monkeypatch.setattr(server, "voxcpm2_state", "ready")
+
+    r = client.get("/v1/audio/voices")
+
+    assert r.status_code == 200
+    body = r.json()
+    assert body["engines"] == ["voxcpm2"]
+    assert "languages" not in body
+    assert [o["id"] for o in body["data"]] == ["clone-vox1"]
+    assert body["data"][0]["engine"] == "voxcpm2"
+
+
+def test_list_voices_503_both_unavailable(client, monkeypatch, voices_root):
+    """503 only when VoxCPM2 is disabled and Reverb is not ready."""
+    monkeypatch.setattr(server, "tts", None)
+    monkeypatch.setattr(server, "tts_state", "disabled")
+    monkeypatch.setattr(server, "voxcpm2_store", None)
+    monkeypatch.setattr(server, "voxcpm2_state", "disabled")
+
+    assert client.get("/v1/audio/voices").status_code == 503
+
+    for state in ("not_loaded", "loading", "ready", "error"):
+        monkeypatch.setattr(server, "voxcpm2_state", state)
+        monkeypatch.setattr(server, "voxcpm2_store", _vox_store(voices_root))
+        assert client.get("/v1/audio/voices").status_code == 200
+
+
+def test_list_voices_voxcpm2_only_enabled(client, monkeypatch, voices_root):
+    """With only VoxCPM2 enabled the route still answers 200, no `languages`."""
+    monkeypatch.setattr(server, "tts", None)
+    monkeypatch.setattr(server, "tts_state", "disabled")
+    monkeypatch.setattr(server, "voxcpm2_store", _vox_store(voices_root))
+    monkeypatch.setattr(server, "voxcpm2_state", "not_loaded")
+
+    r = client.get("/v1/audio/voices")
+
+    assert r.status_code == 200
+    body = r.json()
+    assert body["object"] == "list"
+    assert body["data"] == []
+    assert "languages" not in body
+
+
+def test_list_voices_does_not_trigger_load(client, monkeypatch, voices_root):
+    """A listing never starts the loader (state table, `not_loaded`)."""
+    spawned = []
+    monkeypatch.setattr(server, "_load_voxcpm2", lambda: spawned.append(1))
+    monkeypatch.setattr(server, "voxcpm2_store", _vox_store(voices_root))
+    monkeypatch.setattr(server, "voxcpm2_state", "not_loaded")
+
+    r = client.get("/v1/audio/voices")
+
+    assert r.status_code == 200
+    assert spawned == []
+    assert server.voxcpm2_state == "not_loaded"
+
+
+def test_list_voices_languages_present_when_reverb_ready(
+    client, monkeypatch, voices_root
+):
+    """`languages` is present with Reverb ready, omitted otherwise."""
+    reverb = ReverbStub()
+    reverb.languages = ["de", "en", "es", "fr", "it", "pl", "pt"]
+    monkeypatch.setattr(server, "tts", reverb)
+    monkeypatch.setattr(server, "tts_state", "ready")
+    monkeypatch.setattr(server, "voxcpm2_state", "disabled")
+
+    r = client.get("/v1/audio/voices")
+    assert r.status_code == 200
+    assert r.json()["languages"] == ["de", "en", "es", "fr", "it", "pl", "pt"]
+
+    monkeypatch.setattr(server, "tts", None)
+    monkeypatch.setattr(server, "tts_state", "disabled")
+    monkeypatch.setattr(server, "voxcpm2_store", _vox_store(voices_root))
+    monkeypatch.setattr(server, "voxcpm2_state", "not_loaded")
+
+    r = client.get("/v1/audio/voices")
+    assert r.status_code == 200
+    assert "languages" not in r.json()
+
+
+def test_list_voices_voxcpm2_clone_deleted_mid_listing(
+    client, monkeypatch, voices_root
+):
+    """A clone whose files vanish before the read is absent — no 500."""
+    store = _vox_store(voices_root)
+    store.save("clone-keep", np.zeros(16000, dtype=np.float32), 16000, "keep")
+    # A clone deleted between the scan and the read: its JSON is already gone.
+    sf.write(
+        store.root / "clone-gone.wav",
+        np.zeros(16000, dtype=np.float32),
+        16000,
+        subtype="PCM_16",
+        format="WAV",
+    )
+    monkeypatch.setattr(server, "voxcpm2_store", store)
+    monkeypatch.setattr(server, "voxcpm2_state", "ready")
+
+    raw = TestClient(server.app, raise_server_exceptions=False)
+    r = raw.get("/v1/audio/voices")
+
+    assert r.status_code == 200
+    assert [o["id"] for o in r.json()["data"]] == ["clone-keep"]
+
+
+# --- Races on the clone store --------------------------------------------
+
+
+def test_voxcpm2_clone_deleted_between_check_and_engine_call(
+    client, monkeypatch, voices_root
+):
+    """A clone deleted after the check makes the library call a 400, never 500."""
+
+    class VanishStore(server.ReferenceVoiceStore):
+        def info(self, voice_id):
+            info = super().info(voice_id)
+            self.delete(voice_id)  # a concurrent DELETE wins before the engine reads
+            return info
+
+    store = VanishStore(voices_root)
+    store.save("clone-race", np.zeros(16000, dtype=np.float32), 16000, None)
+    monkeypatch.setattr(server, "voxcpm2_store", store)
+    monkeypatch.setattr(
+        server, "voxcpm2", SpeechVoxEngine(exc=FileNotFoundError("gone"))
+    )
+    monkeypatch.setattr(server, "voxcpm2_state", "ready")
+
+    r = client.post(
+        "/v1/audio/speech",
+        json={"model": "voxcpm2", "input": "Hi", "voice": "clone-race"},
+    )
+
+    assert r.status_code == 400
+    assert "unknown voice" in r.json()["error"]["message"]
+
+
+def test_voxcpm2_clone_deleted_mid_create_leaves_no_listed_orphan(
+    client, monkeypatch, voices_root
+):
+    """A delete racing the create cannot leave a WAV without its JSON listed."""
+
+    class DeleteAfterSaveStore(server.ReferenceVoiceStore):
+        def save(self, voice_id, samples, sample_rate, transcript, language=None):
+            created = super().save(
+                voice_id, samples, sample_rate, transcript, language=language
+            )
+            # The create already built its body; a concurrent DELETE lands now.
+            self.delete(voice_id)
+            return created
+
+    store = DeleteAfterSaveStore(voices_root)
+    monkeypatch.setattr(server, "voxcpm2", SpeechVoxEngine())
+    monkeypatch.setattr(server, "voxcpm2_store", store)
+    monkeypatch.setattr(server, "voxcpm2_state", "ready")
+
+    raw = TestClient(server.app, raise_server_exceptions=False)
+    r = _create(raw, audio=_wav_bytes(3), text="hi", voice_id="clone-race")
+
+    assert r.status_code == 201  # the body never read the files back
+
+    # A WAV whose JSON was never written is unlisted too (the JSON is the marker).
+    sf.write(
+        store.root / "clone-orphan.wav",
+        np.zeros(16000, dtype=np.float32),
+        16000,
+        subtype="PCM_16",
+        format="WAV",
+    )
+    listed = [o["id"] for o in raw.get("/v1/audio/voices").json()["data"]]
+    assert "clone-race" not in listed
+    assert "clone-orphan" not in listed
