@@ -486,7 +486,7 @@ Each named and testable.
 
 2. **SEC-V2 — `design` and `style` cannot inject the library's syntax.** `(`, `)`, and newlines are rejected; length caps hold. Additionally, `input` whose first character (after stripping) is `(` is rejected — the library treats a leading `(` as a design prefix. Test: `test_voxcpm2_design_style_syntax_rejected`.
 
-3. **SEC-V3 — reference path from validated id only.** The WAV path handed to the library comes from `voxcpm2_store._path(voice_id)` which calls `check_voice_id()` — the path is always under the store root. Test: `test_voxcpm2_store_invalid_ids` (already validates store-level rejection of traversal ids; extend it to assert `_path()` raises `ValueError` on a traversal id, and a speech request with a traversal id → 400).
+3. **SEC-V3 — reference path from validated id only.** The WAV path handed to the library comes from `voxcpm2_store._path(voice_id)` which calls `check_voice_id()` — the path is always under the store root. Test: `test_invalid_ids_rejected_before_touching_disk` (validates store-level rejection of traversal ids before anything is written); `test_reference_path_rejects_traversal` asserts `_path()` raises `ValueError` on a traversal id, and a speech request with a traversal id is a 400.
 
 4. **SEC-V4 — upload limits unchanged.** >20 MB → 413; <1 s or >30 s → 400; decode failure → 400 with no exception text. Test: `test_voxcpm2_clone_upload_limits`.
 
@@ -624,7 +624,7 @@ Every scenario runs without a GPU. Tests fake `voxcpm` through `sys.modules`; no
 
 **Scenario: store round-trip.** Given a valid id. When a WAV + JSON is saved, listed via `listing()`, read via `info()`, then deleted. Then all operations succeed; after delete `exists()` returns `False`. **Test:** `test_voxcpm2_store_roundtrip` (`tests/test_voxcpm2_store.py`).
 
-**Scenario: store rejects invalid ids.** Given ids with path traversal, uppercase, too short, too long. When passed to `VoxCPM2VoiceStore`. Then `ValueError` is raised; `exists()` returns `False`. **Test:** `test_voxcpm2_store_invalid_ids` (`tests/test_voxcpm2_store.py`).
+**Scenario: store rejects invalid ids.** Given ids with path traversal, uppercase, too short, too long. When passed to `VoxCPM2VoiceStore`. Then `ValueError` is raised; `exists()` returns `False`. **Test:** `test_invalid_ids_rejected_before_touching_disk` (`tests/test_voxcpm2_store.py`).
 
 **Scenario: store lists only complete clones.** Given a directory with a complete clone (`.wav` + `.json`) and an incomplete one (`.wav` only). When `listing()` is called. Then only the complete clone appears. **Test:** `test_voxcpm2_store_incomplete_clone_skipped` (`tests/test_voxcpm2_store.py`).
 
