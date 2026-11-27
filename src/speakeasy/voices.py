@@ -134,10 +134,11 @@ class ReferenceVoiceStore:
     """VoxCPM2 clones as `<root>/voxcpm2/<id>.wav` plus `<id>.json`.
 
     The WAV is mono PCM_16 written at the given sample rate (the clone upload is
-    decoded to 16 kHz, so a stored reference is 16 kHz). The JSON describes the
-    reference and is written second, so a WAV without its JSON is the only state
-    a crash between the two renames can leave, and it is never listed. Ids pass
-    the same `check_voice_id()` as Reverb's store.
+    decoded to 16 kHz, so a stored reference is 16 kHz). The JSON records the
+    engine, the language and transcript (either may be null), the duration and
+    the creation time; it is written second, so a WAV without its JSON is the
+    only state a crash between the two renames can leave, and it is never
+    listed. Ids pass the same `check_voice_id()` as Reverb's store.
     """
 
     engine = "voxcpm2"
@@ -201,11 +202,14 @@ class ReferenceVoiceStore:
             raise ValueError(f"voice {voice_id!r} is corrupt or unreadable")
         return result
 
-    def save(self, voice_id: str, samples, sample_rate: int, transcript) -> int:
+    def save(
+        self, voice_id: str, samples, sample_rate: int, transcript, language=None
+    ) -> int:
         """Atomically write the reference: WAV first, then the JSON sidecar.
 
         Each file goes to a temp in the same directory and is published with
-        `os.replace`, so the final paths only ever hold complete files. Returns
+        `os.replace`, so the final paths only ever hold complete files. `language`
+        comes from the clone form and is stored verbatim, not validated. Returns
         the `created` timestamp — the WAV's mtime, read from the temp file
         before the rename publishes it.
         """
@@ -216,6 +220,7 @@ class ReferenceVoiceStore:
         self.root.mkdir(parents=True, exist_ok=True, mode=0o700)
         payload = {
             "engine": self.engine,
+            "language": language,
             "transcript": transcript,
             "seconds": len(samples) / sample_rate,
             "created": 0,

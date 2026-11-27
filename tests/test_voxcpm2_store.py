@@ -29,7 +29,7 @@ def _write_wav(path, n=16000, sample_rate=16000):
 
 
 def test_store_layout_and_roundtrip(store):
-    """After save: both files, a 16 kHz mono PCM_16 WAV, four-key JSON."""
+    """After save: both files, a 16 kHz mono PCM_16 WAV, five-key JSON."""
     voice_id = "clone-1"
     samples = _samples()
 
@@ -50,8 +50,9 @@ def test_store_layout_and_roundtrip(store):
     assert info.subtype == "PCM_16"
 
     payload = json.loads(meta.read_text(encoding="utf-8"))
-    assert set(payload) == {"engine", "transcript", "seconds", "created"}
+    assert set(payload) == {"engine", "language", "transcript", "seconds", "created"}
     assert payload["engine"] == "voxcpm2"
+    assert payload["language"] is None
     assert payload["transcript"] == "hello there"
     assert payload["seconds"] == pytest.approx(1.0)
     assert payload["created"] == created
@@ -68,6 +69,20 @@ def test_transcript_may_be_null(store):
     store.save("clone-2", _samples(), 16000, None)
     info = store.info("clone-2")
     assert info["transcript"] is None
+
+
+def test_language_round_trips_verbatim(store):
+    """`language` is stored as given, even a value no validator would accept."""
+    language = "Klingon (KLI) 42!"
+    store.save("clone-3", _samples(), 16000, "hello", language=language)
+
+    assert store.info("clone-3")["language"] == language
+    assert store.listing() == [("clone-3", store.info("clone-3"))]
+
+
+def test_language_defaults_to_null(store):
+    store.save("clone-4", _samples(), 16000, None)
+    assert store.info("clone-4")["language"] is None
 
 
 def test_directory_created_on_first_use(tmp_path):
