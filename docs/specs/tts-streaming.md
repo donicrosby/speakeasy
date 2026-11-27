@@ -22,10 +22,14 @@ Speech can be delivered as it is generated, for callers that want first audio so
 
 Copied verbatim from the brief §2. These are settled; the spec restates them and does not reopen them.
 
-| #  | Decision | His words (verbatim) | What they settle |
-|----|----------|----------------------|------------------|
-| D3 | Streaming endpoint | "yes to streaming endpoint" | It is built. |
-| D4 | Diffusion steps | "10 step default is probably better" | Stays 10 (`src/speakeasy/engines.py:287`). No card changes it, and it is not made configurable. |
+His message of 2026-11-27, verbatim:
+
+> Fix the README, yes no default model, yes to streaming endpoint, 10 step default is probably better.
+
+| #  | His words | The answer that matters here | What it settles |
+|----|-----------|------------------------------|------------------|
+| D3 | "yes to streaming endpoint" | The parked option "streaming endpoint: server work and the page" | It is built. |
+| D4 | "10 step default is probably better" | VoxCPM2's diffusion steps, 5 against 10 | Stays 10 (`src/speakeasy/engines.py:287`). No card changes it, and it is not made configurable. |
 
 ## 3. Orchestrator's rulings (restated as requirements)
 
