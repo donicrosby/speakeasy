@@ -110,7 +110,7 @@ All `/v1/*` endpoints require the bearer token (existing `require_auth`). `/heal
 
 **Response 401** (wrong/missing key): `{"detail": "Invalid or missing API key"}` — existing FastAPI `HTTPException` shape.
 
-**Response 503** (TTS loading/disabled/error): `{"error": {"message": "tts is still loading (first start downloads about 1 GB of weights)"}}` for loading, `"…tts is disabled…"` for disabled, and `"tts encountered an error and is unavailable"` for error. The error message is fixed — exception details are logged (`log.exception`) but never returned in the response body.
+**Response 503** (TTS loading/disabled/error): `{"error": {"message": "tts is still loading (first start downloads about 1 GB of weights)"}}` for loading, `"tts is disabled: SPEAKEASY_TTS_ENABLED=false, or the tts extra is not installed"` for disabled, and `"tts encountered an error and is unavailable"` for error. All three messages are fixed — exception details are logged (`log.exception`) but never returned in the response body.
 
 ### 4.2 `POST /v1/audio/speech`
 
@@ -226,7 +226,7 @@ Each requirement is named and testable.
 
 8. **SEC-08 — model loads off the startup path.** `start_tts()` spawns a daemon thread; readiness checks only Whisper + Moonshine. Test: `test_ready_reports_loading_while_tts_boots` (`test_tts.py`).
 
-9. **SEC-09 — CSP with no `unsafe-inline`.** `GET /` returns `Content-Security-Policy: default-src 'self'; media-src 'self' blob:; connect-src 'self'; img-src 'self' data:; base-uri 'none'; frame-ancestors 'none'`. Test: `test_index_has_csp_header` (`test_ui.py`).
+9. **SEC-09 — CSP with no `unsafe-inline`.** `GET /` returns `Content-Security-Policy: default-src 'self'; media-src 'self' blob:; connect-src 'self'; img-src 'self' data:; base-uri 'none'; frame-ancestors 'none'`. Test: `test_index_page` (`tests/test_ui.py`, §8.8).
 
 10. **SEC-10 — no inline script, style, or event handlers.** The CSP forbids inline scripts and styles; the static HTML `/` page has no `<script>` or `<style>` blocks — only `<link rel="stylesheet">` and `<script src="app.js">`. The page also has no inline event-handler attributes (`onclick=`, `onload=`, etc.). Verify by reading `index.html` source in `test_ui.py`.
 
@@ -307,7 +307,7 @@ Every scenario runs without a GPU. Tests fake `reverb_tts` through `sys.modules`
 
 **Scenario: cudnn disabled only on HIP.** Given `torch.version.hip` set. When `ReverbEngine` is constructed. Then `torch.backends.cudnn.enabled` is `False`. When `hip` is `None`, `cudnn.enabled` is left alone. **Test:** `test_cudnn_disabled_only_on_hip` (`tests/test_tts.py`).
 
-**Scenario: presets resolved once at construction.** Given a fake `reverb_tts` module whose `preset_voice()` records every call. When `ReverbEngine` is constructed. Then all 16 presets are fetched during `__init__`. When `voice()` is called for a known preset. Then `preset_voice()` is NOT called again — the cached `Voice` object is returned. No `hf_hub_download` network call can fire on the request path. **Test:** `test_presets_cached_at_construction` (`tests/test_tts.py`).
+**Scenario: presets resolved once at construction.** Given a fake `reverb_tts` module whose `preset_voice()` records every call. When `ReverbEngine` is constructed. Then every preset the fake module offers is fetched during `__init__` (the real engine: 16). When `voice()` is called for a known preset. Then `preset_voice()` is NOT called again — the cached `Voice` object is returned. No `hf_hub_download` network call can fire on the request path. **Test:** `test_presets_cached_at_construction` (`tests/test_tts.py`).
 
 ### 8.3 Voice store
 
