@@ -25,6 +25,11 @@ unchanged.
   zero-shot clones saved from a reference clip, on an OpenAI-compatible
   `POST /v1/audio/speech`, plus a static web page at `/` that demos the round
   trip: record or upload → transcribe → speak.
+- **A second TTS engine (VoxCPM2)** — opt in per request with
+  `"model": "voxcpm2"`: 48 kHz output, 30 languages with no language tag, a
+  voice designed from a written description, style hints on a clone, and
+  transcript-assisted cloning. Loaded on first use, unloaded after an idle
+  period — see [Second TTS engine: VoxCPM2](#second-tts-engine-voxcpm2).
 - **Optional auth** — set `SPEAKEASY_API_KEY` and the `/v1/*` endpoints demand it as a bearer token; unset means open, for local dev.
 - **Silero VAD** built in (on by default) to skip silence before
   transcription.
@@ -63,22 +68,28 @@ curl -F file=@note.wav -F response_format=json \
 
 ### `POST /v1/audio/speech`
 
-OpenAI-compatible text-to-speech (Reverb-TTS). JSON body:
+OpenAI-compatible text-to-speech. Reverb-TTS is the default; `"model":
+"voxcpm2"` selects the [second engine](#second-tts-engine-voxcpm2). JSON body:
 
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
 | `input` | string | *(required)* | Text to speak, 1–4096 chars (whitespace-only is rejected) |
-| `voice` | string | `en_male_narrator_1` | A preset id or a saved clone id |
+| `voice` | string | `en_male_narrator_1` | A preset id or a saved clone id. Under `voxcpm2`: `"default"` (its own voice) or a saved VoxCPM2 clone |
 | `response_format` | string | `mp3` | `mp3`, `wav`, `flac`, or `pcm` |
-| `speed` | float | `1.0` | `0.25`–`4.0`. Scales the target length as `1 / speed` (`2.0` is shorter, `0.5` is longer) — see below |
-| `model` | string | `""` | Accepted for OpenAI clients; the server has one TTS model |
-| `language` | string | *(the voice's language)* | One of `de`, `en`, `es`, `fr`, `it`, `pl`, `pt` |
+| `speed` | float | `1.0` | Reverb: `0.25`–`4.0`, scaling the target length as `1 / speed` (`2.0` is shorter, `0.5` is longer) — see below. `voxcpm2`: must be `1.0` |
+| `model` | string | `""` | `"voxcpm2"` selects the second engine; every other value (including `""`) is Reverb-TTS |
+| `language` | string | *(the voice's language)* | Reverb: one of `de`, `en`, `es`, `fr`, `it`, `pl`, `pt`. `voxcpm2`: accepted and ignored |
 | `seed` | integer | *(random)* | Reproducible take when set |
+| `cfg` | float | `2.0` | VoxCPM2 guidance strength, `1.0`–`5.0` (outside that range is a `422`). VoxCPM2 only |
+| `design` | string | *(none)* | VoxCPM2 voice built from a description, 1–300 chars, with `voice: "default"`. VoxCPM2 only |
+| `style` | string | *(none)* | VoxCPM2 style hint, 1–200 chars, on `"default"` or a clone. VoxCPM2 only |
 
-Response headers: `X-Speakeasy-Engine` (`reverb-tts`), `X-Speakeasy-Elapsed`,
-`X-Speakeasy-Audio-Duration` (the output length in seconds), and
-`X-Speakeasy-RTF` (real-time factor). `pcm` is raw 24 kHz signed 16-bit
-little-endian mono (`audio/pcm`), matching OpenAI's definition.
+Response headers: `X-Speakeasy-Engine` (`reverb-tts` or `voxcpm2`),
+`X-Speakeasy-Elapsed`, `X-Speakeasy-Audio-Duration` (the output length in
+seconds), and `X-Speakeasy-RTF` (real-time factor). `pcm` is raw signed 16-bit
+little-endian mono (`audio/pcm`), matching OpenAI's definition — at **24 kHz**
+for Reverb and **48 kHz** for VoxCPM2, the sample rate of the engine that
+produced it (`wav`, `mp3` and `flac` carry that rate in the container).
 
 ```bash
 curl -s -X POST http://localhost:8080/v1/audio/speech \
@@ -167,6 +178,105 @@ Every transcription response carries:
 - `X-Speakeasy-Engine` — which engine produced the transcript (`whisper` or `moonshine`)
 - `X-Speakeasy-Elapsed` — transcription time in seconds
 
+## Second TTS engine: VoxCPM2
+
+VoxCPM2 is a second, **opt-in** text-to-speech engine. Reverb-TTS stays the
+default, and nothing changes for a request that does not ask for VoxCPM2.
+
+**Selecting it.** Send `"model": "voxcpm2"` on `POST /v1/audio/speech` (or the
+`model` form field on `POST /v1/audio/voices`). Every other `model` value —
+including `""` and OpenAI's `tts-1` names — is Reverb-TTS. `voxcpm2` also
+appears in `GET /v1/models` and as `"voxcpm2"` in `GET /health/ready` while the
+engine is enabled.
+
+### Request fields
+
+`cfg`, `design` and `style` are VoxCPM2-only; any of them sent to Reverb is a
+`400` naming `voxcpm2`.
+
+| Field | Type | Default | Notes |
+|-------|------|---------|-------|
+| `cfg` | float | `2.0` | Guidance strength, `1.0`–`5.0` (outside that range is a `422`). Higher is louder and follows the text more literally |
+| `design` | string | *(none)* | A voice built from a description, 1–300 chars. Only with `voice: "default"` |
+| `style` | string | *(none)* | A style hint, 1–200 chars, on `"default"` or a clone |
+
+`design` and `style` are mutually exclusive, and neither may contain `(`, `)`
+or a newline (the library's syntax is a parenthesized prefix; an `input` that
+starts with `(` is rejected for the same reason).
+
+- **`speed`** has no effect under VoxCPM2 and must be `1.0`; anything else is a
+  `400` (`{"error": {"message": "speed must be 1.0 for the voxcpm2 engine"}}`).
+  Reverb's `speed` is unchanged.
+- **`language`** is accepted and ignored — the model needs no language tag and
+  covers 30 languages.
+- **`voice`** is `"default"` (the model's own voice) or the id of a saved
+  VoxCPM2 clone; an omitted `voice` resolves to `"default"`. A Reverb preset id
+  is a `400`.
+
+### Voices and clones
+
+A VoxCPM2 clone stores the reference clip; the model runs at speech time, not
+at clone-create time, so `text` (the reference's transcript) is **optional** on
+the clone form. With a transcript, speech for that clone uses the library's
+combined mode: the reference is isolated behind its own audio tokens and its
+audio is continued in context — the closest match. Without one it is plain
+voice cloning. The upload limits are Reverb's (20 MB, 1–30 s), and a clone id
+is unique across both engines (a collision with a Reverb clone is a `409`).
+`GET /v1/audio/voices` carries an `engine` field on every object, and `DELETE`
+returns the `engine` that owned the clone.
+
+### Sample rate
+
+VoxCPM2 synthesizes at **48 kHz** (Reverb at 24 kHz). The `wav`, `mp3` and
+`flac` responses carry that rate, and `pcm` is raw s16le mono at the same rate,
+so a client that hardcodes 24 kHz will misread a VoxCPM2 `pcm` stream.
+
+### Loading and idle unload
+
+VoxCPM2 loads **on the first request**, not at startup: that request answers
+`503` and starts the load, and `GET /health/ready` reports
+`"voxcpm2": "loading"` until it is `"ready"` (the web UI polls and re-sends).
+The first use also downloads about **4.7 GB** of weights from HuggingFace — on
+a cold `/models` volume that can take minutes. After
+`SPEAKEASY_TTS_VOXCPM_IDLE_SECONDS` (default `600`) with no VoxCPM2 speech the
+engine unloads to free its memory, and the next request reloads it (the same
+`503`-then-ready path); set the setting to `0` to keep it loaded. A load that
+fails sets the engine to `error` and is **not** retried — restart the server to
+recover.
+
+### Cost
+
+VoxCPM2 runs at roughly real time — about **1 second of wall time per second of
+audio** (RTF 1.03–1.07 at the default CFG 2.0 and 10 steps, flat across length
+and mode; about 17 characters of text per second of audio). Fewer diffusion
+steps are faster (5 steps: 0.91) and more are slower (16: 1.24). It holds
+**about 5–8 GB** of the GPU's shared memory while loaded: ~5.0 GB right after
+load, ~5.4 GB peak on short takes, ~7.9 GB on a ~50 s take (reserved grows to
+~11 GB over a long session). Reverb is 20–30× faster and needs 1.4–2.0 GB.
+Measured on the ROCm host (gfx1151); see
+[spike 005](spikes/005-voxcpm2-rocm/README.md).
+
+### Bad takes
+
+VoxCPM2 occasionally produces a take that is mostly silence or noise for the
+input. The server does not retry silently — it answers `503` with a fixed
+reason (`{"error": {"message": "voxcpm2 could not generate a good take for this
+input; check the input length and try again"}}`), so the caller can ask again
+(with a different `seed` if one was used).
+
+### Limits
+
+- **No rate control.** `speed` must be `1.0`; VoxCPM2 has no playback-rate
+  knob. Use Reverb-TTS when the rate matters.
+- **Loudness varies.** Output level changes with `cfg` (about 17 dB from 1.0 to
+  5.0) and by a few dB with the `seed`; there is no normalization.
+- **CUDA is verified at build only.** The engine is verified at runtime on ROCm
+  (gfx1151) only; the CUDA image imports it but no NVIDIA GPU has run inference
+  (see [README.docker.md](README.docker.md)).
+- **Weights licence.** VoxCPM2's weights are **Apache-2.0** (commercial use
+  permitted); Reverb-TTS's are CC BY-NC 4.0 (non-commercial) — see
+  [License](#license).
+
 ## Engine routing
 
 For each request, the engine is picked as follows:
@@ -249,6 +359,9 @@ All settings are environment variables with the `SPEAKEASY_` prefix:
 | `SPEAKEASY_TTS_MODEL` | `software-mansion/Reverb-TTS` | HuggingFace model ID for TTS |
 | `SPEAKEASY_TTS_VARIANT` | `int8` | `fp32`, `fp16`, `int8`, or `int4` — download size only, same speed |
 | `SPEAKEASY_TTS_DEVICE` | `auto` | `auto`, `cuda`, or `cpu` |
+| `SPEAKEASY_TTS_VOXCPM_ENABLED` | `true` | Enable the VoxCPM2 engine. A no-op unless the `tts-voxcpm` extra is installed |
+| `SPEAKEASY_TTS_VOXCPM_MODEL` | `openbmb/VoxCPM2` | HuggingFace model ID for VoxCPM2 |
+| `SPEAKEASY_TTS_VOXCPM_IDLE_SECONDS` | `600` | Unload VoxCPM2 after this many seconds with no speech; `0` never unloads |
 | `SPEAKEASY_VOICES_DIR` | *(unset)* | Voices root for saved clones. When set, the value **is** the root (no `/voices` suffix); otherwise `<SPEAKEASY_HF_HOME or ~/.cache/speakeasy>/voices` |
 | `SPEAKEASY_API_KEY` | *(unset)* | Bearer token required by the `/v1/*` endpoints. Unset or empty = no auth — see [Authentication](#authentication) |
 
@@ -319,5 +432,6 @@ spikes, kept in [`spikes/`](spikes/):
 
 The Reverb-TTS weights speakeasy downloads at runtime are licensed separately:
 **CC BY-NC 4.0 (non-commercial)** — see the model card for
-`software-mansion/Reverb-TTS`. The Apache-2.0 license above covers speakeasy's
-own code, not those weights.
+`software-mansion/Reverb-TTS`. The VoxCPM2 weights are licensed **Apache-2.0**
+(commercial use permitted). The Apache-2.0 license above covers speakeasy's own
+code, not those weights.
