@@ -2,6 +2,7 @@
 
 Endpoints:
     POST /v1/audio/transcriptions  — OpenAI-compatible transcription
+    POST /v1/audio/speech          — TTS synthesis (Reverb), OpenAI-compatible
     GET  /v1/audio/voices          — list preset and cloned voices (TTS)
     GET  /v1/models                — list loaded models
     GET  /health                   — liveness
@@ -10,6 +11,7 @@ Endpoints:
 
 from __future__ import annotations
 
+import io
 import logging
 import os
 import secrets
@@ -17,7 +19,10 @@ import tempfile
 import threading
 from contextlib import asynccontextmanager
 from pathlib import Path
+from typing import Literal
 
+import numpy as np
+import soundfile as sf
 from fastapi import (
     Depends,
     FastAPI,
@@ -30,6 +35,7 @@ from fastapi import (
 )
 from fastapi.responses import JSONResponse, Response
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
+from pydantic import BaseModel, Field
 
 from .config import Settings, resolve_device_compute
 from .engines import MoonshineEngine, ReverbEngine, WhisperEngine, probe_duration
@@ -232,6 +238,96 @@ def list_voices():
     if resp := tts_unavailable():
         return resp
     return {"object": "list", "languages": tts.languages, "data": _voice_objects()}
+
+
+SPEECH_FORMATS = {  # response_format -> (libsndfile format, subtype, content type)
+    "wav": ("WAV", "PCM_16", "audio/wav"),
+    "mp3": ("MP3", "MPEG_LAYER_III", "audio/mpeg"),
+    "flac": ("FLAC", "PCM_16", "audio/flac"),
+    "pcm": (None, None, "audio/pcm"),  # raw 24 kHz s16le mono, as OpenAI defines it
+}
+
+
+class SpeechRequest(BaseModel):
+    input: str = Field(max_length=4096)
+    voice: str = "en_male_narrator_1"
+    response_format: Literal["wav", "mp3", "flac", "pcm"] = "mp3"
+    speed: float = Field(default=1.0, ge=0.25, le=4.0)  # a length factor; see README
+    model: str = ""  # accepted for OpenAI clients; the server has one TTS model
+    language: str | None = None  # default: the voice's language
+    seed: int | None = None
+
+
+def _bad_request(message: str) -> JSONResponse:
+    return JSONResponse(status_code=400, content={"error": {"message": message}})
+
+
+def _resolve_voice(voice_id: str):
+    """A saved clone by id, else a preset. ValueError if neither."""
+    if voices_store is not None and voices_store.exists(voice_id):
+        return voices_store.load(voice_id)
+    try:
+        return tts.voice(voice_id)
+    except ValueError:
+        known = ", ".join(
+            [p["id"] for p in tts.presets()]
+            + (voices_store.ids() if voices_store else [])
+        )
+        raise ValueError(f"unknown voice {voice_id!r}. Known: {known}") from None
+
+
+def _encode(audio: np.ndarray, fmt: str) -> tuple[bytes, str]:
+    snd, subtype, media = SPEECH_FORMATS[fmt]
+    if snd is None:
+        return (np.clip(audio, -1, 1) * 32767).astype("<i2").tobytes(), media
+    buf = io.BytesIO()
+    with sf.SoundFile(
+        buf, "w", samplerate=tts.sample_rate, channels=1, format=snd, subtype=subtype
+    ) as f:
+        f.write(audio)
+    return buf.getvalue(), media
+
+
+@app.post("/v1/audio/speech", dependencies=[Depends(require_auth)])
+def speech(req: SpeechRequest):
+    # A plain `def`, not `async def`: FastAPI runs it on the threadpool, so the
+    # engine lock blocks a worker thread and never the event loop.
+    if resp := tts_unavailable():
+        return resp
+    text = req.input.strip()
+    if not text:
+        return _bad_request("input must not be empty")
+    try:
+        voice = _resolve_voice(req.voice)
+    except ValueError as e:
+        return _bad_request(str(e))
+    language = req.language or voice.language
+    if language not in tts.languages:
+        return _bad_request(
+            f"unsupported language {language!r}. Supported: {', '.join(tts.languages)}"
+        )
+    audio, elapsed = tts.synthesize(
+        text, voice, language, seed=req.seed, speed=req.speed
+    )
+    body, media_type = _encode(audio, req.response_format)
+    duration = len(audio) / tts.sample_rate
+    log.info(
+        "speech voice=%s language=%s audio=%.2fs elapsed=%.3fs",
+        req.voice,
+        language,
+        duration,
+        elapsed,
+    )
+    return Response(
+        content=body,
+        media_type=media_type,
+        headers={
+            "X-Speakeasy-Engine": tts.name,
+            "X-Speakeasy-Elapsed": str(round(elapsed, 3)),
+            "X-Speakeasy-Audio-Duration": str(round(duration, 3)),
+            "X-Speakeasy-RTF": str(round(elapsed / max(duration, 0.01), 3)),
+        },
+    )
 
 
 @app.post("/v1/audio/transcriptions", dependencies=[Depends(require_auth)])

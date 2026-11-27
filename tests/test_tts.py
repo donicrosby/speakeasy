@@ -6,7 +6,9 @@ extra is not installed. Server/endpoint TTS scenarios are added by later
 slices.
 """
 
+import inspect
 import io
+import struct
 import sys
 import threading
 import time
@@ -515,3 +517,220 @@ def test_list_voices_401(client, monkeypatch):
     r = client.get("/v1/audio/voices")
     assert r.status_code == 401
     assert r.json() == {"detail": "Invalid or missing API key"}
+
+
+# ---------------------------------------------------------------------------
+# Slice 4 — POST /v1/audio/speech (§4.2 speech contract, §8.6 scenarios)
+# ---------------------------------------------------------------------------
+
+SPEECH_SAMPLES = 12000  # 0.5 s at 24 kHz — what the stub engine returns
+SPEECH_PCM_BYTES = SPEECH_SAMPLES * 2  # s16le mono
+
+
+def _wav_channels_and_rate(body: bytes) -> tuple[int, int]:
+    """(channels, sample rate) from a WAV's `fmt ` chunk."""
+    assert body[:4] == b"RIFF"
+    i = body.index(b"fmt ")
+    channels, sample_rate = struct.unpack("<HI", body[i + 10 : i + 16])
+    return channels, sample_rate
+
+
+class PresetVoice:
+    def __init__(self, language):
+        self.language = language
+
+
+class SpeechEngine:
+    """Stub TTS engine: 0.5 s of a sine at 24 kHz; records every synthesize call."""
+
+    name = "reverb-tts"
+    sample_rate = 24000
+    languages = ["de", "en"]
+
+    def __init__(self):
+        self.calls = []
+        self._presets = {"de_female_standard": "de", "en_male_narrator_1": "en"}
+
+    def presets(self):
+        return [
+            {"id": i, "language": lang, "transcript": ""}
+            for i, lang in sorted(self._presets.items())
+        ]
+
+    def voice(self, preset_id):
+        if preset_id not in self._presets:
+            raise ValueError(f"unknown voice {preset_id!r}")
+        return PresetVoice(self._presets[preset_id])
+
+    def synthesize(self, text, voice, language, *, seed=None, speed=1.0):
+        self.calls.append(
+            {
+                "text": text,
+                "voice": voice,
+                "language": language,
+                "seed": seed,
+                "speed": speed,
+            }
+        )
+        t = np.arange(SPEECH_SAMPLES) / self.sample_rate
+        return (0.5 * np.sin(2 * np.pi * 440 * t)).astype(np.float32), 0.25
+
+
+class StubStore:
+    """A VoiceStore that serves fixed voices, for the clone-resolution path."""
+
+    def __init__(self, voices: dict | None = None):
+        self._voices = voices or {}
+
+    def exists(self, voice_id):
+        return voice_id in self._voices
+
+    def load(self, voice_id):
+        return self._voices[voice_id]
+
+    def ids(self):
+        return sorted(self._voices)
+
+
+@pytest.fixture()
+def speech_engine(monkeypatch):
+    engine = SpeechEngine()
+    monkeypatch.setattr(server, "tts", engine)
+    monkeypatch.setattr(server, "voices_store", StubStore())
+    monkeypatch.setattr(server, "tts_state", "ready")
+    return engine
+
+
+@pytest.mark.parametrize(
+    "fmt, media_type",
+    [
+        ("mp3", "audio/mpeg"),
+        ("wav", "audio/wav"),
+        ("flac", "audio/flac"),
+        ("pcm", "audio/pcm"),
+    ],
+)
+def test_speech_response_formats(client, speech_engine, fmt, media_type):
+    r = client.post("/v1/audio/speech", json={"input": "Hi", "response_format": fmt})
+    assert r.status_code == 200
+    assert r.headers["content-type"] == media_type
+    body = r.content
+    if fmt == "wav":
+        assert _wav_channels_and_rate(body) == (1, 24000)
+    elif fmt == "mp3":
+        assert body[:3] == b"ID3" or (body[0] == 0xFF and (body[1] & 0xE0) == 0xE0)
+    elif fmt == "flac":
+        assert body[:4] == b"fLaC"
+    else:  # pcm — raw 24 kHz s16le mono, as OpenAI defines it
+        assert len(body) == SPEECH_PCM_BYTES
+
+
+def test_speech_defaults(client, speech_engine):
+    """Default format mp3, default preset, speed 1.0, language from the voice."""
+    r = client.post("/v1/audio/speech", json={"input": "Hi"})
+    assert r.status_code == 200
+    assert r.headers["content-type"] == "audio/mpeg"
+    call = speech_engine.calls[-1]
+    assert call["text"] == "Hi"
+    assert call["speed"] == 1.0
+    assert call["seed"] is None
+    assert call["voice"].language == "en"
+    assert call["language"] == "en"
+
+
+def test_speech_response_headers(client, speech_engine):
+    r = client.post("/v1/audio/speech", json={"input": "Hi"})
+    assert r.status_code == 200
+    assert r.headers["x-speakeasy-engine"] == "reverb-tts"
+    assert float(r.headers["x-speakeasy-elapsed"]) >= 0
+    assert float(r.headers["x-speakeasy-audio-duration"]) == pytest.approx(0.5)
+    assert float(r.headers["x-speakeasy-rtf"]) >= 0
+
+
+def test_speech_language_defaults_to_voice_language(client, speech_engine):
+    client.post("/v1/audio/speech", json={"input": "Hi", "voice": "de_female_standard"})
+    assert speech_engine.calls[-1]["language"] == "de"
+
+    # An explicit language wins over the voice's.
+    client.post(
+        "/v1/audio/speech",
+        json={"input": "Hi", "voice": "en_male_narrator_1", "language": "de"},
+    )
+    assert speech_engine.calls[-1]["language"] == "de"
+
+
+def test_speech_blank_input_is_400(client, speech_engine):
+    for blank in ("", "   "):
+        r = client.post("/v1/audio/speech", json={"input": blank})
+        assert r.status_code == 400
+        assert r.json() == {"error": {"message": "input must not be empty"}}
+
+
+def test_speech_unknown_voice_lists_known_ids(client, speech_engine):
+    r = client.post("/v1/audio/speech", json={"input": "Hi", "voice": "nope"})
+    assert r.status_code == 400
+    assert r.json() == {
+        "error": {
+            "message": (
+                "unknown voice 'nope'. Known: de_female_standard, en_male_narrator_1"
+            )
+        }
+    }
+
+
+def test_speech_unsupported_language_400(client, speech_engine):
+    r = client.post("/v1/audio/speech", json={"input": "Hi", "language": "xx"})
+    assert r.status_code == 400
+    assert r.json() == {
+        "error": {"message": "unsupported language 'xx'. Supported: de, en"}
+    }
+
+
+def test_speech_pydantic_validation_422(client, speech_engine):
+    r = client.post("/v1/audio/speech", json={"input": "Hi", "speed": 5})
+    assert r.status_code == 422
+    assert any(e["loc"][-1] == "speed" for e in r.json()["detail"])
+
+    r = client.post("/v1/audio/speech", json={"input": "Hi", "response_format": "ogg"})
+    assert r.status_code == 422
+    assert any(e["loc"][-1] == "response_format" for e in r.json()["detail"])
+
+
+def test_speech_with_saved_clone(client, speech_engine, monkeypatch):
+    clone = PresetVoice("de")
+    monkeypatch.setattr(server, "voices_store", StubStore({"clone-abc1": clone}))
+
+    r = client.post("/v1/audio/speech", json={"input": "Hi", "voice": "clone-abc1"})
+    assert r.status_code == 200
+    assert speech_engine.calls[-1]["voice"] is clone
+    assert speech_engine.calls[-1]["language"] == "de"
+
+
+def test_speech_503_when_tts_unavailable(client, monkeypatch):
+    monkeypatch.setattr(server, "tts", None)
+    monkeypatch.setattr(server, "tts_state", "loading")
+    r = client.post("/v1/audio/speech", json={"input": "Hi"})
+    assert r.status_code == 503
+    assert r.json() == {
+        "error": {
+            "message": (
+                "tts is still loading (first start downloads about 1 GB of weights)"
+            )
+        }
+    }
+
+
+def test_speech_401_without_key(client, speech_engine, monkeypatch):
+    monkeypatch.setattr(server.settings, "api_key", "unit-test-key")
+    r = client.post("/v1/audio/speech", json={"input": "Hi"})
+    assert r.status_code == 401
+    assert r.json() == {"detail": "Invalid or missing API key"}
+
+
+def test_speech_handler_is_a_plain_def():
+    """The engine lock must block a threadpool worker, never the event loop."""
+    route = next(
+        r for r in server.app.routes if getattr(r, "path", None) == "/v1/audio/speech"
+    )
+    assert not inspect.iscoroutinefunction(route.endpoint)
+    assert route.endpoint.__name__ == "speech"
