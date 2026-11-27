@@ -761,9 +761,23 @@ def _missing_text_422() -> JSONResponse:
 
 
 def _voice_id_taken(voice_id: str) -> bool:
-    """True when either engine's store already owns `voice_id` (ids are shared)."""
-    if voices_store is not None and voices_store.exists(voice_id):
-        return True
+    """True when either engine's store already owns `voice_id` (ids are shared).
+
+    The Reverb store object is `None` while Reverb is disabled, loading or in
+    error, but its clones are still on disk, so fall back to the file the store
+    would use. The path is built only after the id passes validation, and no
+    store is constructed — its constructor would create the voices directory.
+    """
+    if voices_store is not None:
+        if voices_store.exists(voice_id):
+            return True
+    else:
+        try:
+            check_voice_id(voice_id)
+        except ValueError:
+            return False
+        if (Path(settings.voices_dir_default()) / f"{voice_id}.npz").is_file():
+            return True
     return voxcpm2_store is not None and voxcpm2_store.exists(voice_id)
 
 
