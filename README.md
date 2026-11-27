@@ -188,9 +188,10 @@ Every transcription response carries:
 
 ## Second TTS engine: VoxCPM2
 
-VoxCPM2 is a second, **opt-in** text-to-speech engine. Reverb-TTS stays the
-primary engine, and nothing changes for a request that does not ask for
-VoxCPM2.
+VoxCPM2 is a second, **opt-in** text-to-speech engine. Reverb-TTS is the engine
+for everything that is not VoxCPM2, and a request selects it by name: send
+`"model": "reverb-tts"`. No request is routed by default — a request with no
+`model` is a `422`.
 
 **Selecting it.** Send `"model": "voxcpm2"` on `POST /v1/audio/speech` (or the
 `model` form field on `POST /v1/audio/voices`). `voxcpm2` appears in
