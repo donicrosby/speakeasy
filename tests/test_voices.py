@@ -76,6 +76,23 @@ def test_voice_store_roundtrip(store, fake_reverb):
     assert not (store.root / f"{voice_id}.npz").exists()
 
 
+def test_listing_is_sorted_by_id_not_by_path(store):
+    """Clones are listed in id order, even when file-path order disagrees.
+
+    `clone-a.npz` sorts after `clone-a-b.npz` as a filename (`.` is 46, `-` is
+    45), but ids sort `clone-a` first. The listing follows the ids.
+    """
+    for voice_id in ("clone-a-b", "clone-z", "clone-a"):
+        store.save(voice_id, Voice())
+
+    assert store.ids() == ["clone-a", "clone-a-b", "clone-z"]
+    assert [voice_id for voice_id, _ in store.listing()] == [
+        "clone-a",
+        "clone-a-b",
+        "clone-z",
+    ]
+
+
 @pytest.mark.parametrize(
     "bad_id",
     [

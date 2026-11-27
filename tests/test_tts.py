@@ -561,6 +561,59 @@ def test_list_voices_401(client, monkeypatch):
     assert r.json() == {"detail": "Invalid or missing API key"}
 
 
+def test_list_voices_skips_a_clone_deleted_mid_listing(monkeypatch, tmp_path):
+    """A clone deleted while the listing is built is absent, never a 500.
+
+    The store reports an id whose file a concurrent DELETE removed before the
+    listing could read it. Each surviving clone is read exactly once.
+    """
+    store = voices.VoiceStore(tmp_path / "voices")
+    store.save("clone-keep", ServerVoice(text="keep"))
+
+    class VanishedCloneStore(voices.VoiceStore):
+        reads = 0
+
+        def _read(self, path):
+            type(self).reads += 1
+            return super()._read(path)
+
+        def ids(self):
+            # The scan saw clone-gone; its file is already gone.
+            return sorted([*super().ids(), "clone-gone"])
+
+    VanishedCloneStore.reads = 0
+    monkeypatch.setattr(server, "tts", CloneEngine())
+    monkeypatch.setattr(server, "voices_store", VanishedCloneStore(tmp_path / "voices"))
+    monkeypatch.setattr(server, "tts_state", "ready")
+
+    raw = TestClient(server.app, raise_server_exceptions=False)
+    r = raw.get("/v1/audio/voices")
+
+    assert r.status_code == 200
+    clones = [d["id"] for d in r.json()["data"] if d["type"] == "clone"]
+    assert clones == ["clone-keep"]
+    # ids() then info() read the file twice; the single-pass listing reads once.
+    assert VanishedCloneStore.reads == 1
+
+
+def test_list_voices_clones_sorted_by_id_with_prefix_pair(
+    client, clone_engine, clone_store
+):
+    """Clones keep id order when one id is a prefix-hyphen of another.
+
+    `clone-a` / `clone-a-b` sort the same as ids but the reverse of their file
+    paths, so the response order pins that the listing is ordered by id.
+    """
+    for voice_id in ("clone-a-b", "clone-z", "clone-a"):
+        clone_store.save(voice_id, ServerVoice())
+
+    r = client.get("/v1/audio/voices")
+
+    assert r.status_code == 200
+    clones = [d["id"] for d in r.json()["data"] if d["type"] == "clone"]
+    assert clones == ["clone-a", "clone-a-b", "clone-z"]
+
+
 # ---------------------------------------------------------------------------
 # POST /v1/audio/speech
 # ---------------------------------------------------------------------------
@@ -746,6 +799,33 @@ def test_speech_with_saved_clone(client, speech_engine, monkeypatch):
     assert r.status_code == 200
     assert speech_engine.calls[-1]["voice"] is clone
     assert speech_engine.calls[-1]["language"] == "de"
+
+
+def test_speech_clone_deleted_before_load_is_unknown_voice(speech_engine, monkeypatch):
+    """A clone that vanishes between resolution and load is the unknown-voice 400."""
+
+    class VanishedCloneStore(StubStore):
+        def exists(self, voice_id):
+            return voice_id == "clone-gone"  # the check passed a moment earlier
+
+        def load(self, voice_id):
+            raise FileNotFoundError(voice_id)  # by now the file is gone
+
+        def ids(self):
+            return []
+
+    monkeypatch.setattr(server, "voices_store", VanishedCloneStore())
+    raw = TestClient(server.app, raise_server_exceptions=False)
+    r = raw.post("/v1/audio/speech", json={"input": "Hi", "voice": "clone-gone"})
+
+    assert r.status_code == 400
+    assert r.json() == {
+        "error": {
+            "message": (
+                "unknown voice 'clone-gone'. Known: de_female_standard, en_male_narrator_1"
+            )
+        }
+    }
 
 
 def test_speech_503_when_tts_unavailable(client, monkeypatch):
@@ -1015,6 +1095,33 @@ def test_clone_503(client, monkeypatch):
     }
 
 
+def test_create_voice_body_survives_a_delete_after_save(
+    clone_engine, monkeypatch, tmp_path
+):
+    """A DELETE landing right after the save cannot break the 201 body."""
+
+    class DeleteAfterSaveStore(voices.VoiceStore):
+        def save(self, voice_id, voice):
+            created = super().save(voice_id, voice)
+            self._path(voice_id).unlink(missing_ok=True)  # a concurrent DELETE wins
+            return created
+
+    monkeypatch.setattr(
+        server, "voices_store", DeleteAfterSaveStore(tmp_path / "voices")
+    )
+    raw = TestClient(server.app, raise_server_exceptions=False)
+    r = _clone_request(raw, _wav_bytes(3, 16000), text="hello", voice_id="clone-cr1")
+
+    assert r.status_code == 201
+    body = r.json()
+    assert body["id"] == "clone-cr1"
+    assert body["object"] == "voice"
+    assert body["type"] == "clone"
+    assert body["language"] == "en"
+    assert body["transcript"] == "hello"
+    assert isinstance(body["created"], int)
+
+
 def test_concurrent_clone_create_one_wins(client, clone_engine, clone_store):
     """Two same-id creates: one 201, one 409, clean `.npz`."""
     clone_engine.clone_delay = 0.2
@@ -1108,3 +1215,24 @@ def test_delete_503(client, monkeypatch):
     assert r.json() == {
         "error": {"message": "tts encountered an error and is unavailable"}
     }
+
+
+def test_delete_of_a_clone_that_vanishes_first(clone_engine, clone_store, monkeypatch):
+    """The loser of two concurrent deletes still answers 200, not a 500."""
+    clone_store.save("clone-race1", ServerVoice())
+
+    class VanishedDeleteStore(voices.VoiceStore):
+        def exists(self, voice_id):
+            if voice_id == "clone-race1":
+                # Both requests passed the check against a present file; the
+                # other request's unlink landed first.
+                self._path(voice_id).unlink(missing_ok=True)
+                return True
+            return super().exists(voice_id)
+
+    monkeypatch.setattr(server, "voices_store", VanishedDeleteStore(clone_store.root))
+    raw = TestClient(server.app, raise_server_exceptions=False)
+    r = raw.delete("/v1/audio/voices/clone-race1")
+
+    assert r.status_code == 200
+    assert r.json() == {"id": "clone-race1", "object": "voice", "deleted": True}
