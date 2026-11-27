@@ -1,6 +1,16 @@
 # Speakeasy VoxCPM2 (second TTS engine)
 
-> Spec v1.3 (rev3 — closes MF-25 delete-gate and MF-26 idle-unload timer guard). Validated against `voxcpm` 2.0.3 (PyPI wheel, `openbmb/VoxCPM2` weights), spike 005 (gfx1151), speakeasy `main` `c20645e`. Contract for Reverb: `docs/specs/tts-voice-cloning-ui.md` — this spec extends it and does not change it.
+> Spec v1.4 (rev4 — model required and listed, voice length cap, no default engine). Validated against `voxcpm` 2.0.3 (PyPI wheel, `openbmb/VoxCPM2` weights), spike 005 (gfx1151), speakeasy `main` `c20645e`. Contract for Reverb: `docs/specs/tts-voice-cloning-ui.md` — this spec extends it; one row is superseded (see item 11).
+
+### Revision summary (r4)
+
+**Owner's ruling (2026-11-27) — `model` required and listed, `voice` length cap, no default engine.** Three changes, binding:
+
+- `model` is required on speech and clone-create (5.1, 5.3). Its value must be a listed TTS engine id — `reverb-tts` or `voxcpm2`. Missing/empty → 422. Unlisted → 404 `unknown model`. The check runs before any engine gate, reads no state, takes no lock. No default — a typo'd or empty `model` no longer falls through to Reverb.
+- `voice` capped at 64 characters (5.1 request table). A saved clone id is at most 64 characters and the longest preset id is 17, so no valid voice is excluded; the bound keeps an unbounded string from entering a body that names the unknown voice.
+- `GET /v1/models` lists TTS engine ids by **configuration**, not load state (5.5, state table): `reverb-tts` whenever `SPEAKEASY_TTS_ENABLED` is true, `voxcpm2` whenever `SPEAKEASY_TTS_VOXCPM_ENABLED` is true. A listed engine that is not ready keeps its 503s; a disabled engine is absent from the listing and answers 404.
+- MF-22's `disabled` 503 for speech and clone-create is superseded — disabled engines are unlisted and answer 404 (§5.1, state table). Delete of a VoxCPM2 clone while disabled stays 404 "no saved voice"; the voice listing keeps its gate.
+- One coder slice added (§13): `feat/voxcpm2-model-required`. The Reverb spec gets one supersession note (§11: Reverb spec row).
 
 ### Revision summary (r3)
 
@@ -37,7 +47,7 @@
 
 ### Goals
 
-Add VoxCPM2 as a **second, opt-in TTS engine** next to Reverb. A client selects it per request with `"model": "voxcpm2"`. Reverb stays the default and its behaviour does not change.
+Add VoxCPM2 as a **second, opt-in TTS engine** next to Reverb. A client selects an engine per request with the `model` field (required): `"reverb-tts"` for Reverb, `"voxcpm2"` for VoxCPM2.
 
 VoxCPM2 brings: 48 kHz output, 30 languages with no language tag, a voice designed from a written description (`design`), style hints on a clone (`style`), and cloning that continues the reference audio when its transcript is known (ultimate / transcript-assisted cloning). Its cost is roughly real time per request (Reverb is 20 to 30 times faster) and 5 to 8 GB of the GPU's shared memory while loaded.
 
@@ -80,7 +90,7 @@ Each ruling from the brief's section 5, restated as a requirement with the check
 | R2 | **Idle unload.** While `ready`, every **speech** request updates a last-used time under the TTS lock. A daemon timer (every 15 s) unloads when `now - last_used` exceeds `tts_voxcpm_idle_seconds`, and only if it can take the TTS lock without waiting. `0` disables the timer. Clone-create and voice listing do not bump last-used — only model-running requests do. | `test_voxcpm2_idle_unload` — a mock last-used time older than the timeout causes unload; a request during unload gets the `not_loaded` 503. |
 | R3 | **One TTS lock for both engines**, created at startup in `server.py` and held by every speech request around its engine call. Clone-create does not take this lock — it uses a dedicated create lock. Reverb's own `RLock` inside `ReverbEngine` stays.                              | `test_shared_tts_lock_serialises_both_engines` — two concurrent requests (one `voxcpm2`, one Reverb) never run engine inference at once. |
 | R4 | **Engine gates its own requests.** A `voxcpm2` request does not depend on Reverb being loaded, and a Reverb request does not depend on VoxCPM2. The voice listing answers when either is enabled. The VoxCPM2 clone store must not be created by Reverb's loader.                     | `test_voxcpm2_requests_work_with_reverb_disabled` and `test_reverb_requests_work_with_voxcpm2_disabled`. |
-| R5 | **Selecting the engine.** `"model": "voxcpm2"` selects it. Every other `model` value, including `""`, is Reverb. `voxcpm2` appears in `/v1/models` whenever its state is not `disabled`.                                                                                               | `test_model_field_selects_engine` — `"voxcpm2"` routes to VoxCPM2; `""`, `"tts-1"`, absent go to Reverb. `test_models_lists_voxcpm2_when_not_disabled`. |
+| R5 | **Selecting the engine.** `model` is required on both routes that take it: speech (§5.1) and clone create (§5.3). Its value must be a TTS engine id this deployment lists in `GET /v1/models` — `reverb-tts` selects Reverb, `voxcpm2` selects VoxCPM2. There is no default: a missing value is rejected, and no other value ever falls through to an engine. | `test_model_field_selects_engine` — `"reverb-tts"` routes to Reverb, `"voxcpm2"` routes to VoxCPM2; missing/empty/unlisted → 422/404. `test_models_lists_both_tts_engines`. |
 | R6 | **`voice` under `voxcpm2`.** `"default"` is the model's voice for the seed. Any other id must be a saved VoxCPM2 clone. A Reverb preset id is a 400 that names `default` and the saved clones. `language` is accepted and ignored. `seed` seeds the take (under the TTS lock). An omitted `voice` under `voxcpm2` means `"default"`.      | `test_voxcpm2_voice_default_and_clone` — `"default"` works; a saved clone works; a Reverb preset id returns 400. |
 | R7 | **`speed` under `voxcpm2`** must be 1.0 — anything else is a 400 that says the engine has no rate control.                                                                                                                                                                            | `test_voxcpm2_speed_rejected` — `speed: 1.5` returns 400.                                          |
 | R8 | **`cfg`, `design`, `style` with Reverb.** A value other than the default (`cfg` != 2.0 or non-null string) is a 400 that names `voxcpm2`. `cfg` outside 1.0 to 5.0 is a validation error.                                                                                             | `test_voxcpm2_fields_rejected_on_reverb` — sending `cfg` or `design` or `style` to Reverb returns 400. |
@@ -163,10 +173,10 @@ All `/v1/*` endpoints require the bearer token (existing `require_auth`). `/heal
 | Field              | Type                              | Default                  | Validation                                                                                           | Engine        |
 |--------------------|-----------------------------------|--------------------------|------------------------------------------------------------------------------------------------------|---------------|
 | `input`            | `str`                             | *(required)*             | Min length 1 (non-whitespace), max 4096 chars.                                                       | both          |
-| `voice`            | `str`                             | `"en_male_narrator_1"`   | A preset id, a saved clone id, or `"default"` (VoxCPM2 only). **Under `voxcpm2`, an omitted or null `voice` resolves to `"default"`** — never the Reverb preset.                                         | both          |
+| `voice`            | `str`                             | `"en_male_narrator_1"`   | A preset id, a saved clone id, or `"default"` (VoxCPM2 only). At most 64 characters (Pydantic `max_length`). **Under `voxcpm2`, an omitted or null `voice` resolves to `"default"`** — never the Reverb preset. A saved clone id is at most 64 characters by the id rule and the longest preset id is 17, so no valid voice is excluded; the bound keeps an unbounded string from entering a body that names the unknown voice. | both          |
 | `response_format`  | `"wav"` \| `"mp3"` \| `"flac"` \| `"pcm"` | `"mp3"` | —                                                                                                    | both          |
 | `speed`            | `float`                           | `1.0`                    | 0.25 to 4.0 for Reverb; must be 1.0 for `voxcpm2` (else 400).                                        | Reverb only   |
-| `model`            | `str`                             | `""`                     | `"voxcpm2"` selects the new engine; every other value selects Reverb.                                 | both          |
+| `model`            | `str`                             | *(required)*             | A listed TTS engine id from `GET /v1/models`: `"reverb-tts"` for Reverb, `"voxcpm2"` for VoxCPM2. No default — missing or empty is 422. | both          |
 | `language`         | `str` \| `null`                   | `null`                   | For Reverb: one of the 7 codes. For VoxCPM2: accepted and ignored (the model needs no tag).           | both          |
 | `seed`             | `int` \| `null`                   | `null`                   | Reproducible take when set. For VoxCPM2: applied via `torch.manual_seed(n)` under the TTS lock.       | both          |
 | `cfg`              | `float` \| `null`                 | `null` (→ 2.0)           | CFG guidance strength, 1.0 to 5.0 inclusive. For VoxCPM2 only; a non-null value on Reverb is 400.     | VoxCPM2 only  |
@@ -183,6 +193,8 @@ All `/v1/*` endpoints require the bearer token (existing `require_auth`). `/heal
 6. `design` or `style` contains `(`, `)`, or a newline → 400 `{"error": {"message": "design and style must not contain parentheses or newlines"}}`. The length caps (300 and 200) are Pydantic `max_length`.
 7. Voice is `"default"` → plain (or designed) speech, no reference. Any other voice must be a saved VoxCPM2 clone. A Reverb preset id is 400: `{"error": {"message": "unknown voice '<id>' for voxcpm2; use 'default' or a saved clone: <clone-ids>"}}`.
 8. `input` whose first character (after stripping) is `(` → 400 `{"error": {"message": "input starting with '(' is reserved for design and style; remove the leading parenthesis or use the design field"}}`.
+9. `model` missing or empty → 422 (Pydantic `Field(..., min_length=1)` with `model: str = ...` — no default). This is the same 422 class as `input` over 4096 characters.
+10. `model` not a listed TTS engine id → **404** `{"error": {"message": "unknown model '<value>'. Known: <listed ids, comma-separated>"}`. `<value>` echoes at most the first 64 characters of what was sent, with an ellipsis when it was cut (e.g. `"voxcp..."`). The check runs before any engine gate, reads no engine state and takes no lock: an unlisted name answers 404 whatever the engines' states. Listed ids are `reverb-tts` and `voxcpm2`.
 
 The server builds the library input:
 - **Plain / voice design:** `text` = the request's `input`. For `design` non-null: prepend `"(" + design + ")"`.
@@ -206,10 +218,11 @@ The server builds the library input:
 
 | State                         | Body                                                                                                      |
 |-------------------------------|-----------------------------------------------------------------------------------------------------------|
-| `disabled`                    | `{"error": {"message": "voxcpm2 is disabled; set SPEAKEASY_TTS_VOXCPM_ENABLED=true to enable it"}}`      |
 | `not_loaded` / `loading`      | `{"error": {"message": "voxcpm2 is still loading (first start downloads about 4.7 GB of weights)"}}`     |
 | `error`                       | `{"error": {"message": "voxcpm2 encountered an error and is unavailable"}}`                              |
 | bad take                      | `{"error": {"message": "voxcpm2 could not generate a good take for this input; check the input length and try again"}}` |
+
+**Note:** `disabled` is no longer a 503 on speech and clone-create — when `SPEAKEASY_TTS_VOXCPM_ENABLED` is false the engine is absent from `GET /v1/models`, so `model: "voxcpm2"` answers 404 (unknown model). Delete of a VoxCPM2 clone while disabled stays 404 "no saved voice" (§5.4); the voice listing keeps its 503 when both engines are unavailable (§5.2).
 
 **Response 401, 422:** as in the Reverb spec.
 
@@ -247,10 +260,10 @@ The server builds the library input:
 | Field       | Type     | Default                | Validation                                                                                          |
 |-------------|----------|------------------------|-----------------------------------------------------------------------------------------------------|
 | `file`      | file     | *(required)*           | Reference audio, max 20 MB.                                                                         |
-| `text`      | `str`    | optional for `voxcpm2` | The reference's transcript, non-empty after stripping. **Required when `model` is `"reverb-tts"` or absent; optional for `voxcpm2`.** |
+| `text`      | `str`    | optional for `voxcpm2` | The reference's transcript, non-empty after stripping. **Required when `model` is `"reverb-tts"`; optional for `voxcpm2`.** |
 | `language`  | `str`    | `"en"`                 | For Reverb: one of the 7 codes. For VoxCPM2: accepted but not validated (stored in the metadata).    |
 | `voice_id`  | `str`    | `clone-<hex8>`         | `^[a-z0-9][a-z0-9-]{1,63}$`. Unique across both engines — a collision with a Reverb clone is 409.   |
-| `model`     | `str`    | `""`                   | `"voxcpm2"` for a VoxCPM2 clone; anything else routes to Reverb (the current path).                 |
+| `model`     | `str`    | *(required)*           | A listed TTS engine id: `"reverb-tts"` for a Reverb clone, `"voxcpm2"` for a VoxCPM2 clone. No default — missing or empty is 422; unlisted is 404 (see §5.1). |
 
 **For VoxCPM2:** The route **stores the reference and does not run the model**. The reference is decoded with `faster_whisper.audio.decode_audio(data, sampling_rate=16000)` (PyAV — never through a helper that reads the Reverb engine's sample rate), written as `<voices_dir>/voxcpm2/<voice_id>.wav` at 16 kHz PCM_16 with `soundfile.write(..., 16000, subtype='PCM_16')` via `os.replace`, then the metadata JSON written second. No `tts_lock` is held — the create's own critical section (both-stores existence check through the save) holds `voxcpm2_create_lock` (§7.5, §8). The single-flight load trigger (§7.2) is called through a shared helper that holds a dedicated state lock for the check-and-set — the create does not take `tts_lock` for the load trigger.
 
@@ -268,7 +281,7 @@ The server builds the library input:
 }
 ```
 
-**Response 400:** text empty when `model` is not `voxcpm2`; invalid `voice_id`; reference under 1 s or over 30 s; could not decode the reference.
+**Response 400:** text empty when `model` is `"reverb-tts"` (text is optional for `voxcpm2`); invalid `voice_id`; reference under 1 s or over 30 s; could not decode the reference.
 
 **Response 409:** `voice_id` collides with a preset or an existing clone (either engine).
 
@@ -310,7 +323,7 @@ The server builds the library input:
 
 `"voxcpm2"` is `"disabled"` | `"not_loaded"` | `"loading"` | `"ready"` | `"error"`.
 
-**`GET /v1/models`** — appends `{"id": "voxcpm2", "object": "model", "created": 0, "owned_by": "speakeasy"}` when `voxcpm2_state` is not `"disabled"`.
+**`GET /v1/models`** — lists TTS engine ids by **configuration**, not load state: `reverb-tts` whenever `SPEAKEASY_TTS_ENABLED` is true, `voxcpm2` whenever `SPEAKEASY_TTS_VOXCPM_ENABLED` is true. Each listed model is `{"id": "<engine-id>", "object": "model", "created": 0, "owned_by": "speakeasy"}`. Previously `reverb-tts` appeared only once loaded (S3); under the "unlisted is 404" ruling every speech request during Reverb's startup would 404 instead of answering the loading 503, so the listing needs the names present at config time. A listed engine that is not ready keeps its 503s exactly as pinned. Transcription models keep today's behaviour and are outside this revision.
 
 ## 6. State table
 
@@ -318,7 +331,7 @@ The server builds the library input:
 
 | State         | Speech (`voxcpm2`)                    | Clone create (`voxcpm2`)             | Voice list (any engine)             | Delete (`voxcpm2` clone)            | `/health/ready`                     | `/v1/models`                        |
 |---------------|---------------------------------------|--------------------------------------|-------------------------------------|-------------------------------------|-------------------------------------|-------------------------------------|
-| `disabled`    | 503 — disabled body (see §5.1)        | 503 — disabled body (see §5.1)       | VoxCPM2 clones omitted; Reverb ok   | 404 — "no saved voice"              | `"voxcpm2": "disabled"`             | `voxcpm2` absent                    |
+| `disabled`    | 404 — engine not listed (see §5.1)     | 404 — engine not listed (see §5.1)   | VoxCPM2 clones omitted; Reverb ok   | 404 — "no saved voice"              | `"voxcpm2": "disabled"`             | `voxcpm2` absent                    |
 | `not_loaded`  | 503 — "is still loading" + **starts load** | 503 — "is still loading" + **starts load** | VoxCPM2 clones from disk; load NOT triggered | 200 — delete from disk (no load needed) | `"voxcpm2": "not_loaded"`       | `voxcpm2` present                  |
 | `loading`     | 503 — "is still loading"              | 503 — "is still loading"             | VoxCPM2 clones from disk            | 200 — delete from disk               | `"voxcpm2": "loading"`              | `voxcpm2` present                  |
 | `ready`       | 200 — generate audio; **update last-used** | 201 — store reference (no model call) | VoxCPM2 clones from disk | 200 — delete from disk | `"voxcpm2": "ready"`          | `voxcpm2` present                  |
@@ -491,6 +504,10 @@ Each named and testable.
 
 For every pair where a clone is checked and then used — the clone can vanish between the two calls.
 
+### Model listing check (speech and clone-create)
+
+The first step of both the speech path (§5.1) and the clone-create path (§5.3) is a model listing check: the request's `model` is matched against the listed TTS engine ids from `GET /v1/models`. Unlisted answers 404 with the `unknown model` body (§5.1 rule 10). The check runs before any engine gate, reads no engine state and takes no lock — it is a simple set-membership test over the configured engines. The listed ids are `reverb-tts` (when `SPEAKEASY_TTS_ENABLED` is true) and `voxcpm2` (when `SPEAKEASY_TTS_VOXCPM_ENABLED` is true).
+
 ### Speech path (`VoxCPM2Engine`)
 
 | Pair                                          | File:line in spec (server.py)           | Vanished between calls → outcome                                           |
@@ -522,7 +539,7 @@ The existing three-panel page (`index.html` + `app.js`) gains a VoxCPM2 engine s
 
 ### 11.1 Engine selector
 
-A `<select id="speak-engine">` above or beside the voice select, with two options: `reverb-tts` (default) and `voxcpm2`. Switching engines:
+A `<select id="speak-engine">` above or beside the voice select, with two options: `reverb-tts` (default) and `voxcpm2`. **The page never offers an engine the server does not list:** the `voxcpm2` option is present only while `/health/ready` reports `voxcpm2` as something other than `disabled` — when the engine is disabled it is absent from the listing and the page does not offer it. The page already sends `model` on every speech and clone request; that stays. Switching engines:
 
 - Rebuilds the voice list filtered to that engine.
 - Reverb selection: shows the language `<select>`. The page keeps the select's content across re-renders and refills it from `data.languages` when the key is present (as today — O-R7a: `languages` is present whenever Reverb is ready, omitted otherwise). VoxCPM2 selection: hides or disables the language `<select>` (VoxCPM2 needs no language tag), and the page keeps the select's existing content for when the user switches back.
@@ -647,7 +664,7 @@ Every scenario runs without a GPU. Tests fake `voxcpm` through `sys.modules`; no
 
 **Scenario: voxcpm2 speed != 1.0 → 400.** With `{"model": "voxcpm2", "speed": 1.5}`. Then response is 400 with the fixed message. **Test:** `test_voxcpm2_speed_rejected` (`tests/test_voxcpm2_api.py`).
 
-**Scenario: voxcpm2 fields on Reverb → 400.** With `{"model": "", "cfg": 3.0}`. Then response is 400 naming `voxcpm2`. **Test:** `test_voxcpm2_fields_rejected_on_reverb` (`tests/test_voxcpm2_api.py`).
+**Scenario: voxcpm2 fields on Reverb → 400.** With `{"model": "reverb-tts", "cfg": 3.0}`. Then response is 400 naming `voxcpm2`. **Test:** `test_voxcpm2_fields_rejected_on_reverb` (`tests/test_voxcpm2_api.py`).
 
 **Scenario: cfg out of range → 422.** With `{"model": "voxcpm2", "cfg": 0.5}` or `"cfg": 6.0`. Then response is 422 (Pydantic). **Test:** `test_voxcpm2_cfg_bounds` (`tests/test_voxcpm2_api.py`).
 
@@ -673,7 +690,7 @@ Every scenario runs without a GPU. Tests fake `voxcpm` through `sys.modules`; no
 
 **Scenario: response formats at 48 kHz.** With a stub returning 1 s of float32 audio. When speech is called with each format. Then `wav` byte count matches 48000 * 2 bytes; `pcm` is exactly 96000 bytes with `audio/pcm`. **Test:** `test_voxcpm2_response_formats` (`tests/test_voxcpm2_api.py`).
 
-**Scenario: 503, 401 states.** `disabled`/`not_loaded`/`loading`/`error` each return 503 with the correct fixed message (§5.1); missing key returns 401. **Test:** `test_voxcpm2_speech_503_401` (`tests/test_voxcpm2_api.py`).
+**Scenario: 503, 401 states.** `not_loaded`/`loading`/`error` each return 503 with the correct fixed message (§5.1); `disabled` answers 404 (engine not listed); missing key returns 401. **Test:** `test_voxcpm2_speech_503_401` (`tests/test_voxcpm2_api.py`).
 
 **Scenario: clone deleted between resolution and library call.** Given a store whose `exists` returns `True` but whose `.wav` is missing. When speech is called with that clone's id. Then `FileNotFoundError` from the library → caught → 400 `"unknown voice"`, never 500. **Test:** `test_voxcpm2_clone_deleted_before_library_call` (`tests/test_voxcpm2_api.py`).
 
@@ -683,7 +700,7 @@ Every scenario runs without a GPU. Tests fake `voxcpm` through `sys.modules`; no
 
 **Scenario: clone create with text optional for voxcpm2.** Given an upload with `model=voxcpm2` and no `text`. Then response is 201; `transcript` is `null` in the body. **Test:** `test_voxcpm2_clone_create_no_text_ok` (`tests/test_voxcpm2_api.py`).
 
-**Scenario: clone create with text required for Reverb.** Given an upload with `model=""` (Reverb) and no `text`. Then response is 400. (Existing Reverb test covers this; the VoxCPM2 path does not break it.) **Test:** the existing Reverb clone-validation test (`test_clone_validation_errors`, unchanged — this lane adds no work to it).
+**Scenario: clone create with text required for Reverb.** Given an upload with `model=reverb-tts` (Reverb) and no `text`. Then response is 400. (Existing Reverb test covers this; the VoxCPM2 path does not break it. The test sends `model=reverb-tts` since `model` is now required.) **Test:** the existing Reverb clone-validation test (`test_clone_validation_errors`, adapted to send the required model field).
 
 **Scenario: clone create id collision across engines.** Given a Reverb clone saved as `"shared-id"`. When `POST /v1/audio/voices` is called with `model=voxcpm2` and `voice_id="shared-id"`. Then response is 409. **Test:** `test_voxcpm2_clone_cross_engine_collision` (`tests/test_voxcpm2_api.py`).
 
@@ -715,9 +732,29 @@ Every scenario runs without a GPU. Tests fake `voxcpm` through `sys.modules`; no
 
 **Scenario: engine switch filters voices.** Switching engine to `voxcpm2` removes Reverb presets and shows only `"default"` + VoxCPM2 clones in the voice `<select>`. **Test:** `test_voxcpm2_engine_filter` (`tests/test_ui.py`).
 
+### 12.10 Model selection and voice length
+
+**Scenario: typo'd model on speech → 404 on every engine state.** With any engine state (disabled, not_loaded, loading, ready, error). When `POST /v1/audio/speech` is called with `{"model": "voxpcm2", "input": "Hi"}`. Then response is 404 with the `unknown model` body (§5.1 rule 10); no engine is touched (no state read, no lock). **Test:** `test_typo_model_speech_404` (`tests/test_voxcpm2_api.py`). With a Reverb typo (`"rever-tts"`): same 404, attributed to `tests/test_tts.py`.
+
+**Scenario: typo'd model on clone create → 404 before any write.** With `voxcpm2_state="ready"`. When `POST /v1/audio/voices` is called with `model=voxcpm` and a valid audio file. Then response is 404 with the `unknown model` body; no file is written. **Test:** `test_typo_model_clone_create_404` (`tests/test_voxcpm2_api.py`).
+
+**Scenario: missing or empty model → 422 on both routes.** With `POST /v1/audio/speech` body `{"input": "Hi"}` (no `model` field) → 422. With `{"model": "", "input": "Hi"}` → 422. Same for `POST /v1/audio/voices` multipart with no `model` field → 422. **Test:** `test_model_missing_empty_422` (`tests/test_voxcpm2_api.py`).
+
+**Scenario: 65-character voice → 422.** With `POST /v1/audio/speech` body `{"model": "voxcpm2", "input": "Hi", "voice": "<65 chars>"}`. Then response is 422 (Pydantic `max_length`). A 64-character voice passes validation and proceeds to voice resolution. **Test:** `test_voice_max_length` (`tests/test_voxcpm2_api.py`).
+
+**Scenario: voxcpm2 disabled → absent from listing, speech/clone 404.** With `tts_voxcpm_enabled=False` (voxcpm2 disabled). When `GET /v1/models` is called. Then `voxcpm2` is absent from the model ids. When `POST /v1/audio/speech` is called with `{"model": "voxcpm2", "input": "Hi"}`. Then response is 404 (model unlisted), never 503. When `POST /v1/audio/voices` is called with `model=voxcpm2`. Then response is 404. **Test:** `test_voxcpm2_disabled_unlisted_404` (`tests/test_voxcpm2_api.py`).
+
+**Scenario: both engines enabled, nothing loaded → listing names both.** With `tts_voxcpm_enabled=True` and `tts_enabled=True` but neither engine loaded. When `GET /v1/models` is called. Then both `reverb-tts` and `voxcpm2` appear in the listing (by configuration, not load state — §5.5). When `POST /v1/audio/speech` is called with `{"model": "reverb-tts", "input": "Hi"}`. Then response is 503 with the Reverb loading reason — never a 404. **Test:** `test_models_lists_both_when_unloaded` (`tests/test_voxcpm2_api.py`) and `test_listed_reverb_answers_loading_503` (`tests/test_tts.py`).
+
+**Scenario: Reverb disabled → absent from listing, speech 404.** With `tts_enabled=False`. When `GET /v1/models` is called. Then `reverb-tts` is absent. When `POST /v1/audio/speech` is called with `{"model": "reverb-tts", "input": "Hi"}`. Then response is 404 (model unlisted). **Test:** `test_reverb_disabled_unlisted_404` (`tests/test_tts.py`).
+
+**Scenario: 404 body echoes at most 64 chars of model value.** With a model value longer than 64 characters. When `POST /v1/audio/speech` is called. Then the 404 body's `<value>` is truncated to 64 characters with an ellipsis. **Test:** `test_unknown_model_truncates_value` (`tests/test_voxcpm2_api.py`).
+
+**Scenario: page engine selector hides voxcpm2 when disabled.** With `tts_voxcpm_enabled=False`. When the page loads and `/health/ready` reports `voxcpm2: "disabled"`. Then the engine selector's `voxcpm2` option is absent. **Test:** `test_engine_selector_hides_voxcpm2_when_disabled` (`tests/test_ui.py`).
+
 ## 13. Slices
 
-Eight coder slices in dependency order. Each produces a conventional commit on its branch; each branch starts from the previous slice's merge. The last slice's tip is the lane deliverable.
+Nine coder slices in dependency order. Each produces a conventional commit on its branch; each branch starts from the previous slice's merge. The last slice's tip is the lane deliverable.
 
 | Slice | Key | Branch | Files | Tests |
 |-------|-----|--------|-------|-------|
@@ -729,6 +766,7 @@ Eight coder slices in dependency order. Each produces a conventional commit on i
 | c6 | Clone routes | `feat/voxcpm2-clone-routes` | `src/speakeasy/server.py` (clone create, delete, listing for both engines) | `tests/test_voxcpm2_api.py` (clone half) |
 | c7 | Web UI | `feat/voxcpm2-web-ui` | `src/speakeasy/static/index.html`, `app.js`, `style.css` | `tests/test_ui.py` |
 | c8 | Docs | `docs/voxcpm2-and-spike-005` | `README.md`, `README.docker.md`, `spikes/005-voxcpm2-rocm/` (imported from `ref/voxcpm2/`), `scripts/tts_roundtrip.py` (existing, extended with `--engine` and `--cfg`) | Docker sanity (manual at landing) |
+| c9 | Model required | `feat/voxcpm2-model-required` | `src/speakeasy/server.py` (model listing check, model=required on SpeechRequest and clone-create, voice max_length=64, disabled → unlisted → 404), `src/speakeasy/static/app.js` (engine selector hides voxcpm2 when disabled), `README.md` (add model to every speech request), `scripts/tts_roundtrip.py` (send model on every speech request, Reverb included) | `tests/test_voxcpm2_api.py` (model listing, voice cap, disabled-unlisted scenarios), `tests/test_tts.py` (Reverb model scenarios), `tests/test_ui.py` (selector hides when disabled). **Review:** delta review on top of the lane review in flight. |
 
 **Gate for every slice:** `git add` every new file, then `pre-commit run --all-files`; `uv run --frozen --extra cpu --extra tts pytest tests/ -q`; and `UV_PROJECT_ENVIRONMENT="$PWD/.venv-ci" uv sync --frozen --all-groups && UV_PROJECT_ENVIRONMENT="$PWD/.venv-ci" uv run --frozen pytest tests/ -q`. Only c1 may change `pyproject.toml`, `uv.lock`, or the Dockerfiles.
 
