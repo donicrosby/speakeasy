@@ -14,9 +14,9 @@ unchanged.
 - **Two engines, one API** — Whisper `large-v3-turbo` (faster-whisper /
   CTranslate2) for accuracy and multilingual support; Moonshine base for
   fast transcription of short English voice notes.
-- **Automatic engine routing** — audio under ~10 seconds is routed to
-  Moonshine automatically; everything else goes to Whisper. Clients can
-  override per-request.
+- **You choose the engine per request** — the `model` field names it:
+  `whisper-1` (or the configured `SPEAKEASY_WHISPER_MODEL`) for Whisper,
+  `moonshine-base` for the fast English path. There is no default engine.
 - **GPU acceleration** — CUDA (NVIDIA) and ROCm (AMD) via CTranslate2. The
   ROCm wheel is HIP-backed but exposes the same `device="cuda"` API, so one
   code path covers both.
@@ -46,8 +46,8 @@ Multipart form fields (OpenAI-compatible):
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
 | `file` | file | *(required)* | Audio file to transcribe |
-| `model` | string | `""` | Model name. `moonshine-base` selects the fast path; empty string auto-routes |
-| `language` | string | *(none)* | Language code (e.g. `en`). Anything other than `en` forces Whisper |
+| `model` | string | *(required)* | A listed transcription id from `GET /v1/models`: `whisper-1` (or the configured name) for Whisper, `moonshine-base` for the fast path |
+| `language` | string | *(none)* | Language code (e.g. `en`). Only `en` (or unset) is valid with `moonshine-base`; anything else is a `400` |
 | `response_format` | string | `json` | `json`, `verbose_json`, `text`, `srt`, or `vtt` |
 | `temperature` | float | `0.0` | Sampling temperature (accepted for API compatibility) |
 
@@ -55,14 +55,14 @@ Query parameters:
 
 | Param | Type | Default | Description |
 |-------|------|---------|-------------|
-| `fast` | bool | `false` | Force the Moonshine fast path regardless of audio duration |
+| `fast` | bool | `false` | Selects Moonshine; only valid with `model=moonshine-base` — with a Whisper id it is a `400` |
 | `vad` | bool | `true` | Silero VAD filter (Whisper path only) |
 | `word_timestamps` | bool | `false` | Word-level timestamps (Whisper path only) |
 
 Example:
 
 ```bash
-curl -F file=@note.wav -F response_format=json \
+curl -F file=@note.wav -F model=whisper-1 -F response_format=json \
      http://localhost:8080/v1/audio/transcriptions
 ```
 
@@ -173,11 +173,14 @@ curl -s -X DELETE -H "Authorization: Bearer $SPEAKEASY_API_KEY" \
 | `GET /health` | Liveness probe |
 | `GET /health/ready` | Readiness probe — 503 until models are loaded |
 
-`GET /v1/models` lists the TTS engine ids by configuration: `reverb-tts` while
-`SPEAKEASY_TTS_ENABLED` is true, `voxcpm2` while `SPEAKEASY_TTS_VOXCPM_ENABLED`
-is true — whether or not the engine has finished loading. A listed engine that
-is still loading answers its own `503`; a disabled one is absent from the
-listing and every request naming it is a `404`.
+`GET /v1/models` lists every id this deployment offers, from configuration: the
+transcription ids (`whisper-1`, the configured `SPEAKEASY_WHISPER_MODEL` when it
+differs, and `moonshine-base` while `SPEAKEASY_MOONSHINE_ENABLED` is true),
+followed by the TTS engine ids: `reverb-tts` while `SPEAKEASY_TTS_ENABLED` is
+true, `voxcpm2` while `SPEAKEASY_TTS_VOXCPM_ENABLED` is true — whether or not an
+engine has finished loading. A listed engine that is still loading answers its own
+`503`; a disabled one is absent from the listing and every request naming it is a
+`404`.
 
 ### Response headers
 
@@ -289,19 +292,31 @@ input; check the input length and try again"}}`), so the caller can ask again
 
 ## Engine routing
 
-For each request, the engine is picked as follows:
+There is no routing: the `model` field names the engine, and the request reaches
+only that engine. `model` is required and must be one of the ids
+`GET /v1/models` lists.
 
-1. **`fast=true` query param** — forces Moonshine, regardless of duration.
-2. **`model=moonshine-base` form field** — selects Moonshine by name.
-3. **Auto-route** — if `model` is empty, the audio duration is probed and
-   anything ≤ `SPEAKEASY_FAST_PATH_MAX_SECONDS` (default 10s) goes to
-   Moonshine; longer audio goes to Whisper.
-4. **Otherwise** — Whisper.
+1. **`model=whisper-1`** or the configured `SPEAKEASY_WHISPER_MODEL` — Whisper.
+2. **`model=moonshine-base`** — Moonshine, the fast English path.
+3. **Any other value** — `404`, naming the ids that are listed.
 
-Moonshine is only eligible when `language` is unset or `en` — it is
-**English-only**. It also **drops punctuation** in its output. If Moonshine
-fails to load at startup the server continues with Whisper only; requests
-that would have taken the fast path fall back automatically.
+A request with no `model` is a `422`. `fast=true` selects Moonshine and is only
+valid with `model=moonshine-base`; sent with a Whisper id it is a `400`.
+
+Moonshine is **English-only** — `moonshine-base` with any `language` other than
+`en` (or unset) is a `400`, never a quiet fall back to Whisper. It also
+**drops punctuation** in its output. An engine that is configured but failed to
+load stays listed and answers `503` with the reason; a request that names the
+other engine is unaffected.
+
+### Migration
+
+The `model` field is required and is no longer auto-routed:
+
+- A request with no `model` → add one, e.g. `-F model=whisper-1`.
+- A request with a name that is not listed → use one from `GET /v1/models`.
+- `fast=true` with a Whisper model → send `-F model=moonshine-base` instead.
+- `model=moonshine-base` with a language other than `en` → unset `language`.
 
 ## Quickstart
 
@@ -361,7 +376,6 @@ All settings are environment variables with the `SPEAKEASY_` prefix:
 | `SPEAKEASY_COMPUTE_TYPE` | `auto` | `auto`, `float16`, `int8`, or `int8_float16`. `auto` resolves to `float16` on GPU, `int8` on CPU |
 | `SPEAKEASY_MOONSHINE_ENABLED` | `true` | Load the Moonshine fast-path engine at startup |
 | `SPEAKEASY_MOONSHINE_MODEL` | `UsefulSensors/moonshine-base` | HuggingFace model ID for the fast path |
-| `SPEAKEASY_FAST_PATH_MAX_SECONDS` | `10.0` | Audio at or under this duration is auto-routed to Moonshine |
 | `SPEAKEASY_BEAM_SIZE` | `5` | Beam size for Whisper decoding |
 | `SPEAKEASY_VAD_FILTER` | `true` | Silero VAD filter default (Whisper path) |
 | `SPEAKEASY_HF_HOME` | *(unset)* | HuggingFace cache directory — models persist across restarts when set |
@@ -374,6 +388,9 @@ All settings are environment variables with the `SPEAKEASY_` prefix:
 | `SPEAKEASY_TTS_VOXCPM_IDLE_SECONDS` | `600` | Unload VoxCPM2 after this many seconds with no speech; `0` never unloads |
 | `SPEAKEASY_VOICES_DIR` | *(unset)* | Voices root for saved clones. When set, the value **is** the root (no `/voices` suffix); otherwise `<SPEAKEASY_HF_HOME or ~/.cache/speakeasy>/voices` |
 | `SPEAKEASY_API_KEY` | *(unset)* | Bearer token required by the `/v1/*` endpoints. Unset or empty = no auth — see [Authentication](#authentication) |
+
+> `SPEAKEASY_FAST_PATH_MAX_SECONDS` has been removed: `model` names the engine,
+> so the duration auto-route is gone and the setting is no longer read.
 
 ## Authentication
 
@@ -389,7 +406,8 @@ speakeasy with the same key needs no client changes:
 export SPEAKEASY_API_KEY="$(openssl rand -hex 32)"
 
 curl -H "Authorization: Bearer $SPEAKEASY_API_KEY" \
-     -F file=@note.wav http://localhost:8080/v1/audio/transcriptions
+     -F file=@note.wav -F model=whisper-1 \
+     http://localhost:8080/v1/audio/transcriptions
 ```
 
 ```python
