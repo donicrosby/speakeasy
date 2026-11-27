@@ -13,6 +13,9 @@ TTS_ENV_VARS = (
     "SPEAKEASY_TTS_MODEL",
     "SPEAKEASY_TTS_VARIANT",
     "SPEAKEASY_TTS_DEVICE",
+    "SPEAKEASY_TTS_VOXCPM_ENABLED",
+    "SPEAKEASY_TTS_VOXCPM_MODEL",
+    "SPEAKEASY_TTS_VOXCPM_IDLE_SECONDS",
     "SPEAKEASY_VOICES_DIR",
 )
 
@@ -35,6 +38,13 @@ def test_tts_defaults(clean_env):
 def test_voices_dir_follows_hf_home(clean_env):
     s = Settings(hf_home="/models")
     assert s.voices_dir_default() == "/models/voices"
+
+
+def test_voxcpm2_defaults(clean_env):
+    s = Settings()
+    assert s.tts_voxcpm_enabled is True
+    assert s.tts_voxcpm_model == "openbmb/VoxCPM2"
+    assert s.tts_voxcpm_idle_seconds == 600
 
 
 def test_voices_dir_set_uses_value_as_is(monkeypatch, clean_env):
