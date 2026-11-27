@@ -29,7 +29,7 @@ Copied from the brief's decisions table (rows 1, 2, 4, 5, 6, 7, 8). These are se
 |----|-------------------------|-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
 | 1  | UI tech                 | Single static page served by speakeasy — vanilla HTML/JS/CSS at `/`, no build step, no new deps.                                                                                                                      |
 | 2  | Cloned voices           | Saved on disk + list/delete API — persist in the `/models` volume as `.npz`, survive restarts.                                                                                                                        |
-| 4  | Process model           | TTS in the server process (not a worker) — set by the coexistence smoke below, not a preference.                                                                                                                      |
+| 4  | Process model           | TTS in the server process (not a worker) — set by the coexistence smoke in the brief, not a preference.                                                                                                        |
 | 5  | `/v1/audio/speech` shape | OpenAI JSON body (`model`, `input`, `voice`, `response_format`, `speed`) + two extensions: `language`, `seed`. Agent decision, overridable.                                                                           |
 | 6  | Cloning API             | `POST /v1/audio/voices` multipart (`file`, `text`, `language`, optional `voice_id`). OpenAI has no clone endpoint; this is an extension. Agent decision.                                                              |
 | 7  | `response_format` default | `mp3`, same as OpenAI; the UI asks for `wav`. Agent decision.                                                                                                                                                       |
@@ -40,14 +40,14 @@ Copied from the brief's decisions table (rows 1, 2, 4, 5, 6, 7, 8). These are se
 ### VERIFIED — `reverb-tts 1.0.1`
 
 - **Weights revision.** `tts.py:29` — `REVISION = "v1.0.0"`; the default tag for `software-mansion/Reverb-TTS`.
-- **Preset count.** 16 preset voices (`spike/004-reverb-tts-rocm/results/result.json:presets`); `preset_voices()` enumerates them (`tts.py:156-164`); `preset_voice(name)` raises `ValueError` on unknown (`tts.py:180-181`).
+- **Preset count.** 16 preset voices (`spikes/004-reverb-tts-rocm/results/result.json:presets`); `preset_voices()` enumerates them (`tts.py:156-164`); `preset_voice(name)` raises `ValueError` on unknown (`tts.py:180-181`).
 - **Voice save/load.** `Voice.save(path)` → `np.savez(path, codes=…int16, text=…, language=…)` (`tts.py:67-73`). `Voice.load(path)` reads `.npz` with `codes` (int64, `[8, frames]`), `text`, `language` (`tts.py:83-87`).
 - **`generate` return type.** `np.ndarray` float32 at the model's sample rate (`tts.py:268` — `return out[0] if single else out`).
 - **Sample rate.** `tts.py:116-117` — `self.codec.config.sample_rate`; measured 24000 on gfx1151.
 - **`speed` semantics.** `tts.py:228` — "a factor on the estimated length", not a time-stretch.
 - **Languages.** `text.py:14-22` — `LANGUAGES: Dict[str, str]` lists 7: de, en, es, fr, it, pl, pt. `check_language(language)` raises `ValueError` (`text.py:28-31`).
 - **Reference decode (lib path).** `audio.py:34-36` — `sf.read(str(audio), dtype="float32", always_2d=True)` reads via libsndfile (WAV, FLAC, MP3; no Opus).
-- **`TTS.from_pretrained` signature.** `tts.py:120-154` — `(name, *, variant="int8", revision=None, device=None, dtype=None, sampler=None, codec=CODEC, codec_revision=None)`.
+- **`TTS.from_pretrained` signature.** `tts.py:120-154` — `(name, *, variant="int8", revision=None, token=None, device=None, dtype=None, sampler=None, codec=CODEC, codec_revision=None)`.
 - **`voice()` signature.** `tts.py:183-204` — `(audio, text, language, *, sample_rate=None, prepare=True)`. Accepts a path or float32 array.
 - **Variants.** `tts.py:32` — `VARIANTS = ("fp32", "fp16", "int8", "int4")`; "every variant … download[s] faster but run[s] at the same speed" (`tts.py:140-141`).
 
@@ -62,9 +62,9 @@ Copied from the brief's decisions table (rows 1, 2, 4, 5, 6, 7, 8). These are se
 
 ### VERIFIED — spike 004 (gfx1151 ROCm)
 
-- **Seed reproducibility.** `spike/004-reverb-tts-rocm/results/result.json:seed_reproducible` — `true`.
-- **GPU memory.** `result.json:gpu_mem_peak_mb` — 1984 MB peak; after load 1430 MB.
-- **MIOpen.** `torch.backends.cudnn.enabled = False` required on HIP; find mode costs 1.5–19 s per new output length and intermittently raises `miopenStatusUnknownError`.
+- **Seed reproducibility.** `spikes/004-reverb-tts-rocm/results/result.json:seed_reproducible` — `true`.
+- **GPU memory.** `spikes/004-reverb-tts-rocm/results/result.json:gpu_mem_peak_mb` — 1984 MB peak; after load 1430 MB.
+- **MIOpen.** `spikes/004-reverb-tts-rocm/README.md:7,32` — find mode costs 1.5–19 s per new output length, so `torch.backends.cudnn.enabled = False` is required on HIP. The spike's `miopenStatusUnknownError` came from an invalid `MIOPEN_FIND_MODE=default` value, not find-mode flakiness; the README records it precisely so nobody reads it as MIOpen being flaky.
 
 ### ASSUMED
 
@@ -210,17 +210,17 @@ All `/v1/*` endpoints require the bearer token (existing `require_auth`). `/heal
 
 Each requirement is named and testable.
 
-1. **SEC-01 — voice id is validated before any path is built.** `check_voice_id()` enforces the regex; `VoiceStore._path()` calls it first. Test: `test_voice_id_rejects_traversal` (`test_voices.py`).
+1. **SEC-01 — voice id is validated before any path is built.** `check_voice_id()` enforces the regex; `VoiceStore._path()` calls it first. Test: `test_invalid_voice_ids_rejected` (`tests/test_voices.py`, §8.3 — includes the `../etc/passwd` traversal id).
 
-2. **SEC-02 — clone id collides with preset → 409.** `POST /v1/audio/voices` checks presets before saving. Test: `test_clone_id_preset_collision_returns_409` (`test_tts.py`).
+2. **SEC-02 — clone id collides with preset → 409.** `POST /v1/audio/voices` checks presets before saving. Test: `test_clone_collision_409` (`tests/test_tts.py`, §8.7).
 
-3. **SEC-03 — clone id collides with existing clone → 409.** `VoiceStore.exists()` checked before save. Test: `test_clone_id_duplicate_returns_409` (`test_tts.py`).
+3. **SEC-03 — clone id collides with existing clone → 409.** `VoiceStore.exists()` checked before save. Test: `test_clone_collision_409` (`tests/test_tts.py`, §8.7 — the same test covers both collision kinds).
 
-4. **SEC-04 — reference upload cap 20 MB → 413.** Raw body read capped at `MAX_REFERENCE_BYTES + 1`; exceeds → 413 before any decode. Test: `test_clone_reference_over_20mb_returns_413` (`test_tts.py`).
+4. **SEC-04 — reference upload cap 20 MB → 413.** Raw body read capped at `MAX_REFERENCE_BYTES + 1`; exceeds → 413 before any decode. Test: `test_clone_too_large_413` (`tests/test_tts.py`, §8.7).
 
-5. **SEC-05 — reference duration bounds 1–30 s → 400.** Duration measured after decode; out of range → 400 with the exact duration in the message. Test: `test_clone_reference_too_short_returns_400`, `test_clone_reference_too_long_returns_400` (`test_tts.py`).
+5. **SEC-05 — reference duration bounds 1–30 s → 400.** Duration measured after decode; out of range → 400 with the exact duration in the message. Test: `test_clone_duration_bounds` (`tests/test_tts.py`, §8.7).
 
-6. **SEC-06 — decode failure → 400, no exception text leaked.** Exception caught; message is a fixed string. Test: `test_clone_undecodable_reference_returns_400` (`test_tts.py`).
+6. **SEC-06 — decode failure → 400, no exception text leaked.** Exception caught; message is a fixed string. Test: `test_clone_undecodable_400` (`tests/test_tts.py`, §8.7).
 
 7. **SEC-07 — one inference at a time.** `ReverbEngine` holds a `threading.Lock`; both `synthesize` and `clone` acquire it. The speech endpoint is `def` (not `async def`), so FastAPI runs it on a threadpool — the lock blocks a worker thread, never the event loop. Test: `test_engine_lock_serialises_calls` (`test_tts.py`).
 
@@ -234,7 +234,7 @@ Each requirement is named and testable.
 
 12. **SEC-12 — no `innerHTML` with server or user data.** UI uses `textContent` for all dynamic text (transcripts, errors, voice names). Documented in `app.js`; verified by review.
 
-13. **SEC-13 — API key in `sessionStorage`, never in a URL.** `app.js` stores the key in `sessionStorage.getItem("speakeasy_key")`; `api()` helper adds it as an `Authorization` header. No `?key=` or hash parameters. Test: `test_index_has_no_key_in_url` (review check).
+13. **SEC-13 — API key in `sessionStorage`, never in a URL.** `app.js` stores the key in `sessionStorage.getItem("speakeasy_key")`; `api()` helper adds it as an `Authorization` header. No `?key=` or hash parameters. Check: review of the shipped `app.js`/`index.html` source (no automated test — the repo has no JS harness); behaviour specified in §7.1.
 
 14. **SEC-14 — MIOpen flag set only on HIP.** `ReverbEngine.__init__` disables `torch.backends.cudnn.enabled` only when `torch.version.hip is not None`. Test: `test_cudnn_disabled_only_on_hip` (`test_tts.py`).
 
@@ -330,11 +330,11 @@ Every scenario runs without a GPU. Tests fake `reverb_tts` through `sys.modules`
 
 **Scenario: speech returns audio in the requested format.** With a stub engine returning 0.5 s of sine. When `POST /v1/audio/speech` is called with `{"input": "Hi"}`. Then response is 200, `Content-Type: audio/mpeg`, body starts with MP3 magic. Wav → `RIFF`, flac → `fLaC`, pcm → 24000 bytes with `audio/pcm`. **Test:** `test_speech_response_formats` (`tests/test_tts.py`).
 
-**Scenario: speech response headers.** With a stub engine. When speech is generated. Then response includes `X-Speakeasy-Engine: reverb-tts`, `X-Speakeasy-Audio-Duration`, `X-Speakeasy-RTF`. **Test:** `test_speech_response_headers` (`tests/test_tts.py`).
+**Scenario: speech response headers.** With a stub engine. When speech is generated. Then response includes `X-Speakeasy-Engine: reverb-tts`, `X-Speakeasy-Elapsed`, `X-Speakeasy-Audio-Duration`, `X-Speakeasy-RTF`. **Test:** `test_speech_response_headers` (`tests/test_tts.py`).
 
 **Scenario: speech language defaults to voice language.** With a stub that records the call. When `POST /v1/audio/speech` is called without `language`. Then the stub received the preset's language. When called with an explicit `language`, that wins. **Test:** `test_speech_language_default` (`tests/test_tts.py`).
 
-**Scenario: speech 400 on unknown voice, bad language, empty input.** Each returns 400 with a message. **Test:** `test_speech_validation_errors` (`tests/test_tts.py`).
+**Scenario: speech 400 on unknown voice, bad language, empty input.** Each returns 400 with a message. "Empty" includes whitespace-only `input` (stripped before validation). **Test:** `test_speech_validation_errors` (`tests/test_tts.py`).
 
 **Scenario: speech 422 on out-of-range speed, invalid format.** Each returns 422 (Pydantic). **Test:** `test_speech_pydantic_validation` (`tests/test_tts.py`).
 
