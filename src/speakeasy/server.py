@@ -4,6 +4,8 @@ Endpoints:
     POST /v1/audio/transcriptions  — OpenAI-compatible transcription
     POST /v1/audio/speech          — TTS synthesis (Reverb), OpenAI-compatible
     GET  /v1/audio/voices          — list preset and cloned voices (TTS)
+    POST /v1/audio/voices          — create a voice clone from a reference clip (TTS)
+    DELETE /v1/audio/voices/{id}   — delete a saved voice clone (TTS)
     GET  /v1/models                — list loaded models
     GET  /health                   — liveness
     GET  /health/ready             — readiness (models loaded)
@@ -40,7 +42,7 @@ from pydantic import BaseModel, Field
 from .config import Settings, resolve_device_compute
 from .engines import MoonshineEngine, ReverbEngine, WhisperEngine, probe_duration
 from .responses import FORMATS
-from .voices import VoiceStore
+from .voices import VoiceStore, check_voice_id
 
 log = logging.getLogger("speakeasy")
 
@@ -328,6 +330,112 @@ def speech(req: SpeechRequest):
             "X-Speakeasy-RTF": str(round(elapsed / max(duration, 0.01), 3)),
         },
     )
+
+
+# ---------------------------------------------------------------------------
+# Voice clones — create a voice from a reference clip, and delete one.
+# ---------------------------------------------------------------------------
+
+MAX_REFERENCE_BYTES = 20 * 2**20
+MIN_REFERENCE_SECONDS, MAX_REFERENCE_SECONDS = 1.0, 30.0  # the library warns past 15 s
+
+
+def _decode_reference(data: bytes) -> np.ndarray:
+    """Mono float32 at the codec's sample rate, through PyAV (any browser codec)."""
+    from faster_whisper.audio import decode_audio
+
+    tmp = tempfile.NamedTemporaryFile(suffix=".audio", delete=False)
+    try:
+        tmp.write(data)
+        tmp.close()
+        return decode_audio(tmp.name, sampling_rate=tts.sample_rate)
+    finally:
+        os.unlink(tmp.name)
+
+
+@app.post("/v1/audio/voices", dependencies=[Depends(require_auth)], status_code=201)
+def create_voice(
+    file: UploadFile = File(...),
+    text: str = Form(...),
+    language: str = Form("en"),
+    voice_id: str | None = Form(default=None),
+):
+    # A plain `def`: the engine lock blocks a threadpool worker, not the loop.
+    if resp := tts_unavailable():
+        return resp
+    transcript = text.strip()
+    if not transcript:
+        return _bad_request("text (the reference's exact transcript) must not be empty")
+    if language not in tts.languages:
+        return _bad_request(
+            f"unsupported language {language!r}. Supported: {', '.join(tts.languages)}"
+        )
+    voice_id = voice_id or f"clone-{secrets.token_hex(4)}"
+    # Preset check before id validation: real preset ids use '_', which the
+    # store regex rejects, yet a preset collision must still be 409, not 400.
+    if any(p["id"] == voice_id for p in tts.presets()):
+        return JSONResponse(
+            status_code=409,
+            content={"error": {"message": f"{voice_id!r} is a preset voice"}},
+        )
+    try:
+        check_voice_id(voice_id)
+    except ValueError as e:
+        return _bad_request(str(e))
+    if voices_store.exists(voice_id):  # fast path; re-checked under the lock
+        return JSONResponse(
+            status_code=409,
+            content={"error": {"message": f"voice {voice_id!r} already exists"}},
+        )
+    data = file.file.read(MAX_REFERENCE_BYTES + 1)
+    if len(data) > MAX_REFERENCE_BYTES:
+        return JSONResponse(
+            status_code=413,
+            content={"error": {"message": "reference audio over 20 MB"}},
+        )
+    # Decode and validate duration OUTSIDE the engine lock (SEC-07): a slow or
+    # oversized upload must never stall speech inference.
+    try:
+        samples = _decode_reference(data)
+    except Exception:  # noqa: BLE001 — any decoder failure is a bad upload
+        return _bad_request("could not decode the reference audio")
+    duration = len(samples) / tts.sample_rate
+    if not MIN_REFERENCE_SECONDS <= duration <= MAX_REFERENCE_SECONDS:
+        return _bad_request(
+            f"reference is {duration:.1f}s; give it 3-10 s of speech "
+            f"({MIN_REFERENCE_SECONDS:g}-{MAX_REFERENCE_SECONDS:g} accepted)"
+        )
+    # Serialise only exists-recheck → clone → save under the engine's RLock.
+    # `clone` re-acquires the same lock (reentrant), so the nested acquire is safe.
+    with tts._lock:
+        if voices_store.exists(voice_id):
+            return JSONResponse(
+                status_code=409,
+                content={"error": {"message": f"voice {voice_id!r} already exists"}},
+            )
+        voice = tts.clone(samples, tts.sample_rate, transcript, language)
+        voices_store.save(voice_id, voice)
+    log.info(
+        "voice %s created (%.1fs reference, language=%s)", voice_id, duration, language
+    )
+    return {
+        "id": voice_id,
+        "object": "voice",
+        "type": "clone",
+        **voices_store.info(voice_id),
+    }
+
+
+@app.delete("/v1/audio/voices/{voice_id}", dependencies=[Depends(require_auth)])
+def delete_voice(voice_id: str):
+    if resp := tts_unavailable():
+        return resp
+    if not voices_store.delete(voice_id):  # unknown, a preset, or an invalid id
+        return JSONResponse(
+            status_code=404,
+            content={"error": {"message": f"no saved voice {voice_id!r}"}},
+        )
+    return {"id": voice_id, "object": "voice", "deleted": True}
 
 
 @app.post("/v1/audio/transcriptions", dependencies=[Depends(require_auth)])
