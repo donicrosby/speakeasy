@@ -44,9 +44,10 @@ RUN --mount=type=cache,sharing=locked,target=/root/.cache/uv \
     uv sync --frozen --no-dev --extra cu130 --extra tts
 
 # Sanity: the torch in the venv must be a CUDA build, and the TTS stack must
-# load against it (torchaudio's compiled ops + reverb-tts). No GPU at build
-# time, so the resample runs on CPU.
-RUN /app/.venv/bin/python -c "import torch, torchaudio, reverb_tts; assert torch.cuda.is_available() or torch.version.cuda is not None, 'torch is not a CUDA build'; y = torchaudio.functional.resample(torch.zeros(1, 24000), 24000, 16000); assert y.shape[-1] == 16000, 'torchaudio resample is broken'; print('torch', torch.__version__, 'cuda', torch.version.cuda, '| torchaudio', torchaudio.__version__, '| reverb-tts', reverb_tts.__version__)"
+# load against it (torchaudio's compiled ops + reverb-tts), the static UI must
+# ship in the installed wheel, and libsndfile must be able to write MP3 (the
+# default response_format). No GPU at build time, so the resample runs on CPU.
+RUN /app/.venv/bin/python -c "import torch, torchaudio, reverb_tts, importlib.resources as r, soundfile as sf; assert torch.cuda.is_available() or torch.version.cuda is not None, 'torch is not a CUDA build'; y = torchaudio.functional.resample(torch.zeros(1, 24000), 24000, 16000); assert y.shape[-1] == 16000, 'torchaudio resample is broken'; assert (r.files('speakeasy') / 'static' / 'index.html').is_file(), 'static UI missing from the wheel'; assert (r.files('speakeasy') / 'static' / 'app.js').is_file(), 'static UI missing from the wheel'; assert (r.files('speakeasy') / 'static' / 'style.css').is_file(), 'static UI missing from the wheel'; assert 'MP3' in sf.available_formats(), 'libsndfile without MP3: default response_format would fail'; print('torch', torch.__version__, 'cuda', torch.version.cuda, '| torchaudio', torchaudio.__version__, '| reverb-tts', reverb_tts.__version__)"
 
 VOLUME /models
 
