@@ -70,7 +70,7 @@ OpenAI-compatible text-to-speech (Reverb-TTS). JSON body:
 | `input` | string | *(required)* | Text to speak, 1–4096 chars (whitespace-only is rejected) |
 | `voice` | string | `en_male_narrator_1` | A preset id or a saved clone id |
 | `response_format` | string | `mp3` | `mp3`, `wav`, `flac`, or `pcm` |
-| `speed` | float | `1.0` | `0.25`–`4.0`. **A length factor, not a playback rate** — see below |
+| `speed` | float | `1.0` | `0.25`–`4.0`. Scales the target length as `1 / speed` (`2.0` is shorter, `0.5` is longer) — see below |
 | `model` | string | `""` | Accepted for OpenAI clients; the server has one TTS model |
 | `language` | string | *(the voice's language)* | One of `de`, `en`, `es`, `fr`, `it`, `pl`, `pt` |
 | `seed` | integer | *(random)* | Reproducible take when set |
@@ -87,9 +87,13 @@ curl -s -X POST http://localhost:8080/v1/audio/speech \
   -o out.wav
 ```
 
-> **`speed` caveat.** Reverb applies `speed` as *a factor on the estimated
-> length*, not a time-stretch. Playback speed follows only as far as the model
-> paces the speech, so it is not a reliable rate control at the extremes.
+> **`speed` caveat.** Reverb applies `speed` as a factor on the length it aims
+> for, not as a time-stretch of the finished audio: it generates about
+> `1 / speed` times the estimated length, so `2.0` gives roughly half the
+> duration and `0.5` roughly double, the same direction as OpenAI's `speed`.
+> Measured on one 7.5 s line: `0.5` gave 13.8 s, `1.0` gave 7.5 s, `2.0` gave
+> 3.7 s. Pacing and prosody change with it, so it is not a reliable rate
+> control at the extremes.
 
 ### `GET /v1/audio/voices`
 
