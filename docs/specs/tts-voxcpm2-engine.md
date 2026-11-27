@@ -6,7 +6,7 @@
 
 **MF-25 — delete gate keeps Reverb's pinned contract.** The VoxCPM2-store half answers when the store exists (filesystem operation — no engine needed) and the state is not `disabled`; the Reverb-store fall-through gates on `tts_unavailable()` exactly as today — a delete of a Reverb clone while Reverb is not ready answers Reverb's fixed 503 in every VoxCPM2 state, no Reverb status change. §5.4 states it once; the state table's delete column, §7.5, and §10 agree.
 
-**MF-26 — idle-unload timer guarded by engine state; loader resets last-used at completion.** The timer unloads only when `voxcpm2_state == 'ready'` — a tick in any other state skips. The loader sets `voxcpm2_last_used = time.monotonic()` at load completion so the idle clock measures from the ready transition. Two race rows added to §7.5: (a) timer tick during load (pre-`tts_lock` phase) guarded by the state check — no clobber of `loading`; (b) timer tick just after load completes guarded by the fresh last-used — no reload thrash.
+**MF-26 — idle-unload timer guarded by engine state; loader resets last-used at completion.** The timer unloads only when `voxcpm2_state == 'ready'` — a tick in any other state skips. The loader sets `voxcpm2_last_used = time.monotonic()` at load completion so the idle clock measures from the ready transition. Two race rows added to §7.5: (a) timer tick during load (pre-`tts_lock` phase) guarded by the state check — no clobber of `loading`; (b) timer tick just after load completes guarded by the fresh last-used — no reload thrash. Both interleavings get a §12.4 scenario and test (`test_voxcpm2_timer_skips_during_load`, `test_voxcpm2_timer_skips_after_load`).
 
 ### Revision summary (r2)
 
@@ -624,6 +624,10 @@ Every scenario runs without a GPU. Tests fake `voxcpm` through `sys.modules`; no
 **Scenario: idle unload with tts_voxcpm_idle_seconds=0.** Timer never starts; engine stays loaded indefinitely. **Test:** `test_voxcpm2_idle_unload_disabled` (`tests/test_voxcpm2_api.py`).
 
 **Scenario: unload skips when a request holds the lock.** Timer tries to acquire `tts_lock` with `blocking=False` and fails; it sleeps and retries next cycle. The running request completes normally. **Test:** `test_voxcpm2_unload_skips_under_request` (`tests/test_voxcpm2_api.py`).
+
+**Scenario: unload timer skips while a load is in flight.** With `voxcpm2_state="loading"` (the loader in its pre-`tts_lock` phase, `tts_lock` free) and a `voxcpm2_last_used` older than `tts_voxcpm_idle_seconds`. When the timer ticks. Then the tick skips — the state is not `ready` (§7.3 step 2), so it is never clobbered to `not_loaded`: a subsequent speech request still sees `loading` and returns the loading 503, and `/health/ready` still reports `loading`. **Test:** `test_voxcpm2_timer_skips_during_load` (`tests/test_voxcpm2_api.py`).
+
+**Scenario: unload timer skips just after a load completes.** Given a `voxcpm2_last_used` stale from before the load (older than `tts_voxcpm_idle_seconds`) and a load that just completed (state `ready`, no speech since). When the timer ticks immediately after the ready transition. Then the engine is not unloaded — the loader set `voxcpm2_last_used` at the ready transition under `tts_lock` (§7.2), so the idle clock restarted; no reload thrash. **Test:** `test_voxcpm2_timer_skips_after_load` (`tests/test_voxcpm2_api.py`).
 
 **Scenario: request during unload gets not_loaded 503.** When the unload holds `tts_lock`, an arriving speech request blocks on `tts_lock`, then finds `voxcpm2_state="not_loaded"` → 503. **Test:** `test_voxcpm2_request_during_unload` (`tests/test_voxcpm2_api.py`).
 
