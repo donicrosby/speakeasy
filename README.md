@@ -92,8 +92,9 @@ curl -s -X POST http://localhost:8080/v1/audio/speech \
 > `1 / speed` times the estimated length, so `2.0` gives roughly half the
 > duration and `0.5` roughly double, the same direction as OpenAI's `speed`.
 > Measured on one 7.5 s line: `0.5` gave 13.8 s, `1.0` gave 7.5 s, `2.0` gave
-> 3.7 s. Pacing and prosody change with it, so it is not a reliable rate
-> control at the extremes.
+> 3.7 s, and the `2.0` take came back missing several words when transcribed.
+> Pacing and prosody change with it, so it is not a reliable rate control:
+> stay near `1.0` when every word matters.
 
 ### `GET /v1/audio/voices`
 
