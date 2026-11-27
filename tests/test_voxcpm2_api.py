@@ -2211,5 +2211,5 @@ def test_unknown_model_truncates_value(client):
 
     assert r.status_code == 404
     assert r.json() == {
-        "error": {"message": f"unknown model '{'m' * 64}…'. Known: {KNOWN_DEFAULT}"}
+        "error": {"message": f"unknown model '{'m' * 64}...'. Known: {KNOWN_DEFAULT}"}
     }

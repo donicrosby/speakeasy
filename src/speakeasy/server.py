@@ -452,7 +452,7 @@ def _unknown_model_404(model: str) -> JSONResponse:
     """
     echo = model[:MODEL_ECHO_CHARS]
     if len(model) > MODEL_ECHO_CHARS:
-        echo += "…"
+        echo += "..."
     known = ", ".join(_listed_tts_engines())
     return JSONResponse(
         status_code=404,
