@@ -2,6 +2,7 @@
 
 Endpoints:
     POST /v1/audio/transcriptions  — OpenAI-compatible transcription
+    GET  /v1/audio/voices          — list preset and cloned voices (TTS)
     GET  /v1/models                — list loaded models
     GET  /health                   — liveness
     GET  /health/ready             — readiness (models loaded)
@@ -13,7 +14,9 @@ import logging
 import os
 import secrets
 import tempfile
+import threading
 from contextlib import asynccontextmanager
+from pathlib import Path
 
 from fastapi import (
     Depends,
@@ -29,8 +32,9 @@ from fastapi.responses import JSONResponse, Response
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 
 from .config import Settings, resolve_device_compute
-from .engines import MoonshineEngine, WhisperEngine, probe_duration
+from .engines import MoonshineEngine, ReverbEngine, WhisperEngine, probe_duration
 from .responses import FORMATS
+from .voices import VoiceStore
 
 log = logging.getLogger("speakeasy")
 
@@ -60,6 +64,14 @@ whisper: WhisperEngine | None = None
 moonshine: MoonshineEngine | None = None
 resolved_device = "unknown"
 startup_error: str | None = None
+
+# TTS (Reverb) — loaded on a background thread after Whisper so readiness never
+# waits on it. `disabled | loading | ready | error`; `tts_error` is logged only,
+# never returned (SEC-16).
+tts: ReverbEngine | None = None
+voices_store: VoiceStore | None = None
+tts_state = "disabled"
+tts_error: str | None = None
 
 
 @asynccontextmanager
@@ -94,7 +106,65 @@ async def lifespan(app: FastAPI):
             log.warning("moonshine failed to load, fast path disabled: %s", e)
             moonshine = None
 
+    start_tts()
+
     yield
+
+
+def start_tts() -> None:
+    """Load Reverb off the startup path: readiness is Whisper's, not TTS's."""
+    global tts_state
+    if not settings.tts_enabled:
+        log.info("tts disabled: SPEAKEASY_TTS_ENABLED=false")
+        return
+    try:
+        import reverb_tts  # noqa: F401 — absent without the `tts` extra
+        import torch  # noqa: F401
+    except ImportError as e:
+        log.info(
+            "tts disabled: %s is not installed (uv sync --extra cpu --extra tts)",
+            e.name,
+        )
+        return
+    tts_state = "loading"
+    threading.Thread(target=_load_tts, name="tts-load", daemon=True).start()
+
+
+def _load_tts() -> None:
+    global tts, voices_store, tts_state, tts_error
+    try:
+        engine = ReverbEngine(
+            settings.tts_model, settings.tts_variant, settings.tts_device
+        )
+        store = VoiceStore(Path(settings.voices_dir_default()))
+        # Publish the store before the engine: `tts` is the readiness gate, so a
+        # request that passes the `tts is None` check always sees a live store.
+        voices_store = store
+        tts = engine
+        tts_state = "ready"
+        log.info(
+            "reverb-tts loaded in %.1fs (%s, %d presets, %d saved voices)",
+            engine.load_seconds,
+            settings.tts_model,
+            len(engine.presets()),
+            len(store.ids()),
+        )
+    except Exception as e:  # noqa: BLE001 — TTS is optional; STT stays up
+        tts_state = "error"
+        tts_error = f"reverb-tts failed to load: {e}"
+        log.exception(tts_error)
+
+
+def tts_unavailable() -> JSONResponse | None:
+    """503 with a fixed, state-specific reason while TTS is not ready."""
+    if tts is not None:
+        return None
+    reason = {
+        "loading": "tts is still loading (first start downloads about 1 GB of weights)",
+        "disabled": "tts is disabled: SPEAKEASY_TTS_ENABLED=false, or the tts extra is not installed",
+        "error": "tts encountered an error and is unavailable",
+    }.get(tts_state, "tts unavailable")
+    return JSONResponse(status_code=503, content={"error": {"message": reason}})
 
 
 app = FastAPI(title="speakeasy", version="0.1.0", lifespan=lifespan)
@@ -117,6 +187,7 @@ async def ready():
         "status": "ready",
         "device": resolved_device,
         "models": _model_ids(),
+        "tts": tts_state,
     }
 
 
@@ -137,7 +208,30 @@ def _model_ids() -> list[str]:
         ids.append(settings.whisper_model)
     if moonshine is not None:
         ids.append("moonshine-base")
+    if tts is not None:
+        ids.append("reverb-tts")
     return ids
+
+
+def _voice_objects() -> list[dict]:
+    """Presets first (sorted by id), then saved clones (sorted by id)."""
+    data = [
+        {"id": p["id"], "object": "voice", "type": "preset", "language": p["language"]}
+        for p in tts.presets()
+    ]
+    if voices_store is not None:
+        data += [
+            {"id": i, "object": "voice", "type": "clone", **voices_store.info(i)}
+            for i in voices_store.ids()
+        ]
+    return data
+
+
+@app.get("/v1/audio/voices", dependencies=[Depends(require_auth)])
+def list_voices():
+    if resp := tts_unavailable():
+        return resp
+    return {"object": "list", "languages": tts.languages, "data": _voice_objects()}
 
 
 @app.post("/v1/audio/transcriptions", dependencies=[Depends(require_auth)])
