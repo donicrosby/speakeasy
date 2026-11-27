@@ -846,9 +846,12 @@ def _create_reverb_voice(
             f"reference is {duration:.1f}s; give it 3-10 s of speech "
             f"({MIN_REFERENCE_SECONDS:g}-{MAX_REFERENCE_SECONDS:g} accepted)"
         )
-    # Serialise only exists-recheck → clone → save under the engine's RLock.
-    # `clone` re-acquires the same lock (reentrant), so the nested acquire is safe.
-    with tts._lock:
+    # Serialise re-check → clone → save under the cross-engine create lock
+    # (`voxcpm2_create_lock`) and the engine's RLock: sharing the create lock
+    # with the VoxCPM2 create path is what makes a same-id create on either
+    # engine exactly one 201 and one 409. `clone` re-acquires the engine lock
+    # (reentrant), so the nested acquire is safe.
+    with voxcpm2_create_lock, tts._lock:
         if _voice_id_taken(voice_id):
             return JSONResponse(
                 status_code=409,
