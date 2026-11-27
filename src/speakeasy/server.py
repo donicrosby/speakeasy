@@ -20,6 +20,7 @@ import os
 import secrets
 import tempfile
 import threading
+import time
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Literal
@@ -42,9 +43,15 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
 from .config import Settings, resolve_device_compute
-from .engines import MoonshineEngine, ReverbEngine, WhisperEngine, probe_duration
+from .engines import (
+    MoonshineEngine,
+    ReverbEngine,
+    VoxCPM2Engine,
+    WhisperEngine,
+    probe_duration,
+)
 from .responses import FORMATS
-from .voices import VoiceStore, check_voice_id
+from .voices import ReferenceVoiceStore, VoiceStore, check_voice_id
 
 log = logging.getLogger("speakeasy")
 
@@ -83,6 +90,21 @@ voices_store: VoiceStore | None = None
 tts_state = "disabled"
 tts_error: str | None = None
 
+# VoxCPM2 — a second engine beside Reverb, loaded on the first request and
+# unloaded after an idle period. One `tts_lock` serialises inference across
+# both engines; `voxcpm2_state_lock` is a small dedicated lock for the
+# single-flight load check-and-set. State is `disabled | not_loaded | loading |
+# ready | error`; `voxcpm2_error` is logged only, never returned.
+tts_lock = threading.Lock()
+voxcpm2_state_lock = threading.Lock()
+voxcpm2: VoxCPM2Engine | None = None
+voxcpm2_store: ReferenceVoiceStore | None = None
+voxcpm2_state = "disabled"
+voxcpm2_error: str | None = None
+voxcpm2_last_used = 0.0
+
+VOXCPM2_TIMER_INTERVAL = 15.0  # seconds between idle-unload ticks
+
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -117,6 +139,7 @@ async def lifespan(app: FastAPI):
             moonshine = None
 
     start_tts()
+    start_voxcpm2()
 
     yield
 
@@ -179,6 +202,149 @@ def tts_unavailable() -> JSONResponse | None:
     return JSONResponse(status_code=503, content={"error": {"message": reason}})
 
 
+# Fixed, per-state 503 reasons. The strings are the contract; `voxcpm2_error`
+# is logged only and never reaches a client body.
+VOXCPM2_503_REASONS = {
+    "disabled": (
+        "voxcpm2 is disabled; set SPEAKEASY_TTS_VOXCPM_ENABLED=true to enable it"
+    ),
+    "not_loaded": (
+        "voxcpm2 is still loading (first start downloads about 4.7 GB of weights)"
+    ),
+    "loading": (
+        "voxcpm2 is still loading (first start downloads about 4.7 GB of weights)"
+    ),
+    "error": "voxcpm2 encountered an error and is unavailable",
+}
+
+
+def voxcpm2_503(state: str) -> JSONResponse:
+    """503 with the fixed reason for `state`."""
+    return JSONResponse(
+        status_code=503, content={"error": {"message": VOXCPM2_503_REASONS[state]}}
+    )
+
+
+def voxcpm2_unavailable() -> JSONResponse | None:
+    """503 with a fixed, state-specific reason while VoxCPM2 is not ready."""
+    if voxcpm2_state in VOXCPM2_503_REASONS:
+        return voxcpm2_503(voxcpm2_state)
+    return None
+
+
+def start_voxcpm2() -> None:
+    """Set up the VoxCPM2 lifecycle without loading the model.
+
+    Readiness never waits on the engine: this only picks the starting state,
+    creates the clone store, and starts the idle-unload timer. The model loads
+    on the first request (`_ensure_voxcpm2_loading`).
+    """
+    global voxcpm2_state, voxcpm2_store
+    if voxcpm2_store is not None:
+        return  # already started; never spawn a second timer
+    if not settings.tts_voxcpm_enabled:
+        voxcpm2_state = "disabled"
+        log.info("voxcpm2 disabled: SPEAKEASY_TTS_VOXCPM_ENABLED=false")
+        return
+    try:
+        import torch  # noqa: F401
+        import voxcpm  # noqa: F401 — absent without the `tts-voxcpm` extra
+    except ImportError as e:
+        voxcpm2_state = "disabled"
+        log.info(
+            "voxcpm2 disabled: %s is not installed "
+            "(uv sync --extra cpu --extra tts-voxcpm)",
+            e.name,
+        )
+        return
+    voxcpm2_state = "not_loaded"
+    # The store is a filesystem tree, created eagerly and never by the loader;
+    # it survives an idle unload.
+    voxcpm2_store = ReferenceVoiceStore(Path(settings.voices_dir_default()))
+    if settings.tts_voxcpm_idle_seconds > 0:
+        threading.Thread(
+            target=_voxcpm2_unload_loop, name="voxcpm2-idle", daemon=True
+        ).start()
+
+
+def _ensure_voxcpm2_loading() -> JSONResponse | None:
+    """Single-flight load trigger; 503 while the engine is not loaded, else None.
+
+    A request in `not_loaded` starts exactly one loader thread; a request in
+    `loading` starts nothing. Both answer the loading 503. Never takes
+    `tts_lock` and never skips because it is busy.
+    """
+    global voxcpm2_state
+    with voxcpm2_state_lock:
+        if voxcpm2_state == "not_loaded":
+            voxcpm2_state = "loading"
+            threading.Thread(
+                target=_load_voxcpm2, name="voxcpm2-load", daemon=True
+            ).start()
+            return voxcpm2_503("not_loaded")
+        if voxcpm2_state == "loading":
+            return voxcpm2_503("loading")
+    return None  # ready / disabled / error — the caller applies its own gate
+
+
+def _load_voxcpm2() -> None:
+    """Load the engine under `tts_lock` and publish it. Nothing auto-retries."""
+    global voxcpm2, voxcpm2_state, voxcpm2_error, voxcpm2_last_used
+    try:
+        with tts_lock:
+            engine = VoxCPM2Engine(settings.tts_voxcpm_model, settings.tts_device)
+            voxcpm2 = engine
+            # The idle clock starts at the ready transition, so a tick cannot
+            # unload a freshly loaded engine before its first request arrives.
+            voxcpm2_last_used = time.monotonic()
+            voxcpm2_state = "ready"
+    except Exception as e:  # noqa: BLE001 — TTS is optional; STT stays up
+        with tts_lock:
+            voxcpm2_state = "error"
+            voxcpm2_error = f"voxcpm2 failed to load: {e}"
+        log.exception(voxcpm2_error)
+        return
+    log.info(
+        "voxcpm2 loaded in %.1fs (%s)",
+        engine.load_seconds,
+        settings.tts_voxcpm_model,
+    )
+
+
+def _voxcpm2_unload_loop() -> None:
+    """Idle-unload timer: one pass every `VOXCPM2_TIMER_INTERVAL` seconds."""
+    while True:
+        time.sleep(VOXCPM2_TIMER_INTERVAL)
+        _voxcpm2_unload_tick()
+
+
+def _voxcpm2_unload_tick() -> None:
+    """One idle-unload pass.
+
+    Acts only when the state is `ready`, the idle time has passed and the TTS
+    lock is free at once — so it never unloads under a running request and
+    never clobbers a load in flight or a freshly loaded engine.
+    """
+    global voxcpm2, voxcpm2_state
+    if settings.tts_voxcpm_idle_seconds <= 0:
+        return  # idle unload disabled
+    if not tts_lock.acquire(blocking=False):
+        return  # a request holds the lock; the next tick tries again
+    try:
+        if voxcpm2_state != "ready":
+            return  # nothing to unload in loading / error / disabled / not_loaded
+        if time.monotonic() - voxcpm2_last_used <= settings.tts_voxcpm_idle_seconds:
+            return  # still warm
+        engine = voxcpm2
+        voxcpm2 = None
+        voxcpm2_state = "not_loaded"
+        if engine is not None:
+            engine.unload()  # drops the model, empties the cache, collects
+        log.info("voxcpm2 unloaded after idle; the next request reloads it")
+    finally:
+        tts_lock.release()
+
+
 app = FastAPI(title="speakeasy", version="0.1.0", lifespan=lifespan)
 
 # Static UI at `/` — three files served as-is, no build step, no third-party
@@ -222,6 +388,7 @@ async def ready():
         "device": resolved_device,
         "models": _model_ids(),
         "tts": tts_state,
+        "voxcpm2": voxcpm2_state,
     }
 
 
@@ -244,6 +411,8 @@ def _model_ids() -> list[str]:
         ids.append("moonshine-base")
     if tts is not None:
         ids.append("reverb-tts")
+    if voxcpm2_state != "disabled":
+        ids.append("voxcpm2")
     return ids
 
 
