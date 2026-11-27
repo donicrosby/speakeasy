@@ -289,6 +289,18 @@ def test_moonshine_still_works_when_whisper_failed(monkeypatch, wav_file):
     assert r.headers["x-speakeasy-engine"] == "moonshine"
 
 
+def test_whisper_still_works_when_moonshine_failed(monkeypatch, wav_file):
+    monkeypatch.setattr(server, "whisper", MockWhisper())
+    monkeypatch.setattr(server, "startup_error", None)
+    monkeypatch.setattr(server, "moonshine", None)
+    monkeypatch.setattr(server, "moonshine_error", "moonshine failed to load: OOM")
+    monkeypatch.setattr(server.settings, "moonshine_enabled", True)
+    c = TestClient(server.app)
+    r = _post(c, wav_file, {"model": "whisper-1"})
+    assert r.status_code == 200
+    assert r.headers["x-speakeasy-engine"] == "whisper"
+
+
 @pytest.mark.parametrize("whisper_ok", [True, False])
 @pytest.mark.parametrize("moonshine_state", ["loaded", "failed", "disabled"])
 def test_typo_model_is_404_on_all_states(
