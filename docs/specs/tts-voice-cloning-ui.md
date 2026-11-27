@@ -110,7 +110,7 @@ All `/v1/*` endpoints require the bearer token (existing `require_auth`). `/heal
 
 **Response 401** (wrong/missing key): `{"detail": "Invalid or missing API key"}` — existing FastAPI `HTTPException` shape.
 
-**Response 503** (TTS loading/disabled): `{"error": {"message": "tts is still loading (first start downloads about 1 GB of weights)"}}` or `"…tts is disabled…"`.
+**Response 503** (TTS loading/disabled/error): `{"error": {"message": "tts is still loading (first start downloads about 1 GB of weights)"}}` for loading, `"…tts is disabled…"` for disabled, and `"tts encountered an error and is unavailable"` for error. The error message is fixed — exception details are logged (`log.exception`) but never returned in the response body.
 
 ### 4.2 `POST /v1/audio/speech`
 
@@ -135,7 +135,7 @@ All `/v1/*` endpoints require the bearer token (existing `require_auth`). `/heal
   - `Content-Type`: `audio/mpeg` (mp3), `audio/wav` (wav), `audio/flac` (flac), `audio/pcm` (pcm).
   - `X-Speakeasy-Engine`: `"reverb-tts"`.
   - `X-Speakeasy-Elapsed`: float seconds of inference time.
-  - `X-Speakeasy-Audio-Duration`: float seconds of output audio.
+  - `X-Speakeasy-Audio-Duration`: float seconds of output audio. (The transcriptions endpoint uses `X-Speakeasy-Duration` for the same concept; this is intentional — a future reconciler may unify them.)
   - `X-Speakeasy-RTF`: real-time factor (`elapsed / duration`).
 
 **Response 400:** `{"error": {"message": "…"}}` — unknown voice, unsupported language, empty input.
@@ -172,9 +172,9 @@ All `/v1/*` endpoints require the bearer token (existing `require_auth`). `/heal
 
 **Response 400:** `{"error": {"message": "…"}}` — text empty; unsupported language; invalid `voice_id`; reference under 1 s or over 30 s ("reference is X.Xs; give it 3-10 s of speech (1-30 accepted)"); could not decode the reference audio (message fixed, exception text never leaked).
 
-**Response 409:** `{"error": {"message": "…"}}` — `voice_id` collides with a preset or an existing clone.
+**Response 409:** `{"error": {"message": "…"}}` — `voice_id` collides with a preset or an existing clone. The entire create path (exists check → clone → save) is serialized under the engine lock, and `VoiceStore.save` uses a unique temporary filename (`.{voice_id}.{uuid}.tmp.npz`) so concurrent requests for the same `voice_id` cannot corrupt the `.npz`: exactly one returns 201, the other 409.
 
-**Response 413:** `{"error": {"message": "reference audio over 20 MB"}}` — the raw upload exceeds 20 MB before any decode attempt.
+**Response 413:** `{"error": {"message": "reference audio over 20 MB"}}` — the raw upload exceeds 20 MB before any decode attempt. Known limitation: the 20 MB check runs after Starlette has spooled the multipart body to disk, same as the existing transcriptions endpoint.
 
 **Response 401, 422, 503:** as in 4.1.
 
@@ -200,7 +200,7 @@ All `/v1/*` endpoints require the bearer token (existing `require_auth`). `/heal
 
 ## 5. On-disk contract
 
-- **Directory:** `SPEAKEASY_VOICES_DIR` when set; otherwise `<hf_home or ~/.cache/speakeasy>/voices`.
+- **Directory:** `SPEAKEASY_VOICES_DIR` when set (the value **is** the voices root — no `/voices` suffix is appended); otherwise `<hf_home or ~/.cache/speakeasy>/voices`.
 - **File:** `<voice_id>.npz`, written by `reverb_tts.Voice.save()` (`tts.py:67-73`).
 - **Contents:** `codes` (int16 `[8, frames]`), `text` (the transcript string), `language` (language code string), optional `speech_frames` (int).
 - **Voice id regex:** `^[a-z0-9][a-z0-9-]{1,63}$`. An id is validated before it ever becomes a path; invalid ids are rejected, never sanitized.
@@ -218,17 +218,17 @@ Each requirement is named and testable.
 
 4. **SEC-04 — reference upload cap 20 MB → 413.** Raw body read capped at `MAX_REFERENCE_BYTES + 1`; exceeds → 413 before any decode. Test: `test_clone_too_large_413` (`tests/test_tts.py`, §8.7).
 
-5. **SEC-05 — reference duration bounds 1–30 s → 400.** Duration measured after decode; out of range → 400 with the exact duration in the message. Test: `test_clone_duration_bounds` (`tests/test_tts.py`, §8.7).
+5. **SEC-05 — reference duration bounds 1–30 s → 400.** Duration measured after decode; out of range → 400 with the exact duration in the message. Known limitation: decoded length is not bounded before decode (20 MB of compressed audio can decode to hours of float32). Test: `test_clone_duration_bounds` (`tests/test_tts.py`, §8.7).
 
 6. **SEC-06 — decode failure → 400, no exception text leaked.** Exception caught; message is a fixed string. Test: `test_clone_undecodable_400` (`tests/test_tts.py`, §8.7).
 
-7. **SEC-07 — one inference at a time.** `ReverbEngine` holds a `threading.Lock`; both `synthesize` and `clone` acquire it. The speech endpoint is `def` (not `async def`), so FastAPI runs it on a threadpool — the lock blocks a worker thread, never the event loop. Test: `test_engine_lock_serialises_calls` (`test_tts.py`).
+7. **SEC-07 — one operation at a time; clone-create atomic.** `ReverbEngine` holds a `threading.Lock`; `synthesize`, `clone`, and the entire create path (exists check → clone → save) acquire it. The speech and clone-create endpoints are `def` (not `async def`), so FastAPI runs them on a threadpool — the lock blocks a worker thread, never the event loop. `VoiceStore.save` writes to a unique temporary filename (`.{voice_id}.{uuid}.tmp.npz`) then atomically `os.replace`s it into place. Test: `test_engine_lock_serialises_calls` and `test_concurrent_clone_create_one_wins` (`tests/test_tts.py`).
 
 8. **SEC-08 — model loads off the startup path.** `start_tts()` spawns a daemon thread; readiness checks only Whisper + Moonshine. Test: `test_ready_reports_loading_while_tts_boots` (`test_tts.py`).
 
 9. **SEC-09 — CSP with no `unsafe-inline`.** `GET /` returns `Content-Security-Policy: default-src 'self'; media-src 'self' blob:; connect-src 'self'; img-src 'self' data:; base-uri 'none'; frame-ancestors 'none'`. Test: `test_index_has_csp_header` (`test_ui.py`).
 
-10. **SEC-10 — no inline script or style.** The CSP forbids them; the static HTML `/` page has no `<script>` or `<style>` blocks — only `<link rel="stylesheet">` and `<script src="app.js">`. Verify by reading `index.html` source in `test_ui.py`.
+10. **SEC-10 — no inline script, style, or event handlers.** The CSP forbids inline scripts and styles; the static HTML `/` page has no `<script>` or `<style>` blocks — only `<link rel="stylesheet">` and `<script src="app.js">`. The page also has no inline event-handler attributes (`onclick=`, `onload=`, etc.). Verify by reading `index.html` source in `test_ui.py`.
 
 11. **SEC-11 — no third-party script.** `default-src 'self'` covers scripts. The page loads only local resources.
 
@@ -239,6 +239,8 @@ Each requirement is named and testable.
 14. **SEC-14 — MIOpen flag set only on HIP.** `ReverbEngine.__init__` disables `torch.backends.cudnn.enabled` only when `torch.version.hip is not None`. Test: `test_cudnn_disabled_only_on_hip` (`test_tts.py`).
 
 15. **SEC-15 — no auth on health/root/static.** `/health`, `/health/ready`, `GET /`, `/static/*` have no `Depends(require_auth)`. Test: existing `test_health_probes_stay_open` (`test_auth.py`) + new assertions for `/` and `/static/*` in `test_ui.py`.
+
+16. **SEC-16 — no exception text in any response body.** Every error response body carries a fixed message; exception details, stack traces, file paths, HF repo URLs, and local paths are logged (`log.exception`) but never returned to the client. This covers 400, 500, and 503 bodies from all endpoints. Test: `test_no_exception_text_in_error_bodies` (`tests/test_tts.py` — spot-checks the error-state 503, decode 400, and an unhandled 500 path).
 
 ## 7. UI behaviour
 
@@ -281,6 +283,7 @@ Every panel renders errors in a `<p class="error">` specific to that panel.
 | 401                          | "Wrong or missing API key — enter it above."                                              |
 | 503 (TTS loading)            | "TTS is still loading (first start downloads ~1 GB of weights) — check back in a minute." |
 | 503 (TTS disabled)           | "TTS is not available on this server."                                                    |
+| 503 (TTS error)              | "TTS encountered an error and is unavailable — check the server logs."                     |
 | Network error / fetch fail   | "Could not reach the server — check the connection."                                      |
 | Mic unavailable              | Record buttons replaced with the HTTPS/localhost message (see 7.2).                       |
 
@@ -294,6 +297,8 @@ Every scenario runs without a GPU. Tests fake `reverb_tts` through `sys.modules`
 
 **Scenario: voices dir follows HF_HOME.** Given `SPEAKEASY_VOICES_DIR` unset and `hf_home="/models"`. When `voices_dir_default()` is called. Then it returns `"/models/voices"`. **Test:** `test_voices_dir_follows_hf_home` (`tests/test_config.py`).
 
+**Scenario: voices dir set uses the value as-is.** Given `SPEAKEASY_VOICES_DIR="/custom"`. When `voices_dir_default()` is called. Then it returns `"/custom"` (no `/voices` suffix). **Test:** `test_voices_dir_set_uses_value_as_is` (`tests/test_config.py`).
+
 ### 8.2 Engine
 
 **Scenario: engine loads, presets and synthesize.** Given a fake `reverb_tts` module. When `ReverbEngine` is constructed with `device="cuda"`. Then `name` is `"reverb-tts"`, `sample_rate` is 24000, `languages` is `["de", "en"]`, `presets()` returns preset dicts. `synthesize("Hi.", …)` returns float32 audio and elapsed ≥ 0. **Test:** `test_engine_loads_presets_and_speaks` (`tests/test_tts.py`).
@@ -301,6 +306,8 @@ Every scenario runs without a GPU. Tests fake `reverb_tts` through `sys.modules`
 **Scenario: engine clones from samples.** Given a fake engine. When `clone(samples, 24000, "text", "de")` is called. Then the returned voice has `language="de"` and `FakeTTS.calls` records the clone. **Test:** `test_engine_clones_from_samples` (`tests/test_tts.py`).
 
 **Scenario: cudnn disabled only on HIP.** Given `torch.version.hip` set. When `ReverbEngine` is constructed. Then `torch.backends.cudnn.enabled` is `False`. When `hip` is `None`, `cudnn.enabled` is left alone. **Test:** `test_cudnn_disabled_only_on_hip` (`tests/test_tts.py`).
+
+**Scenario: presets resolved once at construction.** Given a fake `reverb_tts` module whose `preset_voice()` records every call. When `ReverbEngine` is constructed. Then all 16 presets are fetched during `__init__`. When `voice()` is called for a known preset. Then `preset_voice()` is NOT called again — the cached `Voice` object is returned. No `hf_hub_download` network call can fire on the request path. **Test:** `test_presets_cached_at_construction` (`tests/test_tts.py`).
 
 ### 8.3 Voice store
 
@@ -317,6 +324,12 @@ Every scenario runs without a GPU. Tests fake `reverb_tts` through `sys.modules`
 **Scenario: models lists reverb-tts when loaded.** With `tts` monkeypatched to a stub. When `GET /v1/models` is called. Then `"reverb-tts"` appears in the model ids. **Test:** `test_models_lists_reverb_tts` (`tests/test_tts.py`).
 
 **Scenario: models omits reverb-tts when unloaded.** With `tts=None`. When `GET /v1/models` is called. Then `"reverb-tts"` is absent. **Test:** `test_models_omits_tts_when_none` (`tests/test_tts.py`).
+
+**Scenario: ready reports loading while TTS boots.** With `tts=None` and `tts_state="loading"`. When `GET /health/ready` is called. Then the response includes `"tts": "loading"` and the endpoint returns 200 immediately — it does not block waiting for the TTS thread. **Test:** `test_ready_reports_loading_while_tts_boots` (`tests/test_tts.py`).
+
+**Scenario: TTS disabled when extra not installed.** With `reverb_tts` absent from `sys.modules`. When `start_tts()` is called. Then `tts_state` is `"disabled"`, no background thread is started, and `tts` remains `None`. When `GET /health/ready` is called. Then the response includes `"tts": "disabled"`. **Test:** `test_tts_disabled_on_import_error` (`tests/test_tts.py`).
+
+**Scenario: ready reports error state.** With `tts=None` and `tts_state="error"`. When `GET /health/ready` is called. Then the response includes `"tts": "error"`. When a TTS endpoint is called. Then the 503 body is the fixed error message (no exception text). **Test:** `test_ready_reports_error_state` (`tests/test_tts.py`).
 
 ### 8.5 Voice list
 
@@ -356,9 +369,23 @@ Every scenario runs without a GPU. Tests fake `reverb_tts` through `sys.modules`
 
 **Scenario: clone over 20 MB → 413.** **Test:** `test_clone_too_large_413` (`tests/test_tts.py`).
 
+**Scenario: clone 401 without key.** With `settings.api_key` set. When `POST /v1/audio/voices` is called without `Authorization`. Then response is 401. **Test:** `test_clone_401` (`tests/test_tts.py`).
+
+**Scenario: clone 422 on missing multipart fields.** When `POST /v1/audio/voices` is called without `file` or without `text`. Then response is 422 (FastAPI/Pydantic validation error). **Test:** `test_clone_missing_fields_422` (`tests/test_tts.py`).
+
+**Scenario: clone 503 when TTS is None.** With `tts=None`. When `POST /v1/audio/voices` is called. Then response is 503 with the appropriate fixed message. **Test:** `test_clone_503` (`tests/test_tts.py`).
+
+**Scenario: concurrent clone-create same id — one wins.** Given two concurrent `POST /v1/audio/voices` with the same `voice_id`. When both complete. Then exactly one returns 201 with a valid `.npz` on disk, the other returns 409, and the `.npz` loads cleanly (not corrupted by interleaved writes). **Test:** `test_concurrent_clone_create_one_wins` (`tests/test_tts.py`).
+
+**Scenario: engine lock serialises synthesis.** Given a stub engine whose `synthesize` records concurrency (thread count in-flight). When two concurrent `POST /v1/audio/speech` calls are made. Then at most one synthesis is in-flight at any moment. **Test:** `test_engine_lock_serialises_calls` (`tests/test_tts.py`).
+
 **Scenario: delete clone.** Given a saved clone. When `DELETE /v1/audio/voices/{id}` is called. Then response is 200 with `deleted: true`, the `.npz` is gone, and the voice is absent from the list. **Test:** `test_delete_clone` (`tests/test_tts.py`).
 
 **Scenario: delete 404.** Unknown id, preset id, or invalid id → 404. **Test:** `test_delete_404` (`tests/test_tts.py`).
+
+**Scenario: delete 401 without key.** With `settings.api_key` set. When `DELETE /v1/audio/voices/{id}` is called without `Authorization`. Then response is 401. **Test:** `test_delete_401` (`tests/test_tts.py`).
+
+**Scenario: delete 503 when TTS is None.** With `tts=None`. When `DELETE /v1/audio/voices/{id}` is called. Then response is 503. **Test:** `test_delete_503` (`tests/test_tts.py`).
 
 ### 8.8 UI
 
@@ -384,6 +411,37 @@ Seven coder slices, in dependency order, each a card in the `speakeasy` board wi
 
 Gate for every slice: `git add` every new file, then `pre-commit run --all-files`; `uv run --frozen --extra cpu --extra tts pytest tests/ -q`; and `UV_PROJECT_ENVIRONMENT="$PWD/.venv-ci" uv sync --frozen --all-groups && UV_PROJECT_ENVIRONMENT="$PWD/.venv-ci" uv run --frozen pytest tests/ -q` (CI's no-extras job). No slice adds, removes, or bumps a package.
 
+### Slice 7 contract
+
+**Docker sanity assertions (Task 10).** Both `Dockerfile.cuda` and `Dockerfile.rocm` end with a `RUN` that imports `reverb_tts` and additionally asserts:
+
+1. `import importlib.resources as r, soundfile as sf`
+2. `assert (r.files('speakeasy') / 'static' / 'index.html').is_file()` — the static UI shell is present in the installed wheel.
+3. `assert (r.files('speakeasy') / 'static' / 'app.js').is_file()` — the JS bundle is present in the installed wheel.
+4. `assert (r.files('speakeasy') / 'static' / 'style.css').is_file()` — the stylesheet is present in the installed wheel.
+5. `assert 'MP3' in sf.available_formats()` — libsndfile has MP3 support; the default `response_format` would fail without it.
+
+**Docs requirements (Task 11).** `README.md` and `README.docker.md` extended with:
+
+- Five `SPEAKEASY_TTS_*` config rows (`ENABLED`, `MODEL`, `VARIANT`, `DEVICE`, `VOICES_DIR`).
+- The `speed`-is-a-length-factor caveat (not a playback rate).
+- Mic needs HTTPS or `localhost` (`getUserMedia` restriction).
+- **Reverb weights are CC BY-NC 4.0 (non-commercial).**
+- **A saved clone stores its transcript on disk** in the `.npz` file.
+- `/v1/models` extension note.
+- First-start download of ~1.1 GB for TTS weights.
+
+**Round-trip script (Task 12).** `scripts/tts_roundtrip.py` (run inside the image; not installed) orchestrates the real GPU path. Its contract:
+
+1. **Wait:** poll `GET /health/ready` until `tts == "ready"` (timeout 120 s).
+2. **Preset speech → wav:** `POST /v1/audio/speech` with preset `en_male_narrator_1`, a 20-word line, `response_format: "wav"` → save to `t1.wav`.
+3. **Transcribe:** `POST /v1/audio/transcriptions` with `t1.wav` → compute `difflib.SequenceMatcher` similarity between transcription and the original line; assert ≥ 0.8.
+4. **Clone:** `POST /v1/audio/voices` multipart with `t1.wav`, its transcript, `voice_id: "roundtrip"` → assert 201.
+5. **Clone speech:** `POST /v1/audio/speech` with `voice: "roundtrip"` → save to `t2.wav`; transcribe → similarity ≥ 0.8.
+6. **Speed report:** `POST /v1/audio/speech` at speeds 0.5, 1.0, 2.0 → report audio duration and transcript similarity for each.
+7. **Delete:** `DELETE /v1/audio/voices/roundtrip` → assert `deleted: true`.
+8. **Output:** one JSON line per step (`{"step": "…", "ok": true, …}`). Exit code 0 only when all steps pass.
+
 ## 10. Risks and open questions
 
 | #  | Risk / question                                                                             | Who settles it                    | When       |
@@ -396,3 +454,5 @@ Gate for every slice: `git add` every new file, then `pre-commit run --all-files
 | 6  | Mic in browser needs HTTPS or `localhost` (`getUserMedia` restriction).                     | Coder — UI message instead of silent failure | Slice 6    |
 | 7  | `response_format` default `mp3` requires libsndfile with MP3 support. Both Docker images confirm this (sanity step). | Coder — `encode` helper           | Slice 4    |
 | 8  | `pcm` format is raw 24 kHz s16le mono, matching OpenAI's definition. Unusual — document it. | Coder — README                    | Slice 7    |
+| 9  | Corrupt `.npz` in the voices dir (from concurrent writes, manual edits, or fs corruption) can raise inside `VoiceStore.info`/`load` → unhandled 500; one bad file can break `GET /v1/audio/voices` entirely. | Coder — skip/quarantine unreadable files in `ids()` and `info()`; document the 500 for direct-access corruption. | Slice 2    |
+| 10 | Header naming drift: transcriptions returns `X-Speakeasy-Duration` (`server.py:218`), speech returns `X-Speakeasy-Audio-Duration`. Both name the audio length, but the names differ. | Documented in §4.2 and brief — intentional as of this spec; a future reconciler can rename one. | —          |
