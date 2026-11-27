@@ -196,7 +196,7 @@ VoxCPM2.
 `model` form field on `POST /v1/audio/voices`). `voxcpm2` appears in
 `GET /v1/models` whenever `SPEAKEASY_TTS_VOXCPM_ENABLED` is true, and as
 `"voxcpm2"` in `GET /health/ready` in every state. It is the only other engine
-id Reverb speaks; any other `model` value is a `404`, and there is no default.
+id speakeasy serves; any other `model` value is a `404`, and there is no default.
 
 ### Request fields
 
