@@ -1070,15 +1070,30 @@ def test_clone_401(client, clone_engine, monkeypatch):
 
 
 def test_clone_missing_fields_422(client, clone_engine):
-    """No file or no text → 422 (FastAPI/Pydantic)."""
+    """No `model` or no file → 422 (FastAPI/Pydantic)."""
     r = client.post("/v1/audio/voices", data={"text": "hi", "language": "en"})
     assert r.status_code == 422
 
     r = client.post(
         "/v1/audio/voices",
         files={"file": ("ref.wav", _wav_bytes(3, 16000), "audio/wav")},
+        data={"model": "reverb-tts"},
     )
     assert r.status_code == 422
+
+
+def test_clone_missing_text_422_body(client, clone_engine):
+    """A Reverb create without `text` is the 422 request validation produced."""
+    r = client.post(
+        "/v1/audio/voices",
+        files={"file": ("ref.wav", _wav_bytes(3, 16000), "audio/wav")},
+        data={"model": "reverb-tts"},
+    )
+    assert r.status_code == 422
+    assert r.text == (
+        '{"detail":[{"type":"missing","loc":["body","text"],'
+        '"msg":"Field required","input":null}]}'
+    )
 
 
 def test_clone_503(client, monkeypatch):

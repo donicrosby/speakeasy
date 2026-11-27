@@ -766,7 +766,12 @@ def _missing_text_422() -> JSONResponse:
         status_code=422,
         content={
             "detail": [
-                {"type": "missing", "loc": ["body", "text"], "msg": "Field required"}
+                {
+                    "type": "missing",
+                    "loc": ["body", "text"],
+                    "msg": "Field required",
+                    "input": None,
+                }
             ]
         },
     )
