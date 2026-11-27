@@ -688,13 +688,16 @@ function sendPending(pending) {
 function pollWhileLoading() {
   if (loadPollTimer !== null) return; // one loop only, however many requests
   const tick = async () => {
-    loadPollTimer = null;
+    // The token stays held while the probe is in flight: a request held in
+    // that window joins this loop instead of starting a second one.
     const state = await voxcpm2State();
     if (state === "loading") {
       loadPollTimer = window.setTimeout(tick, LOAD_POLL_MS);
       return;
     }
-    // Any other status ends the wait: take the request once, then decide.
+    // Any other status ends the loop: release the token, take the request
+    // once, then decide. A resend that reports loading again can restart it.
+    loadPollTimer = null;
     const pending = pendingRequest;
     pendingRequest = null;
     if (state !== "ready") return;

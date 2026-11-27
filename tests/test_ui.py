@@ -315,6 +315,19 @@ def test_loading_state_polls_readiness_at_five_seconds():
     assert re.search(r'if \(state !== "ready"\) return;', body)
 
 
+def test_the_poll_token_is_held_across_the_readiness_probe():
+    # A request held while the readiness probe is in flight must join the
+    # running loop; releasing the token before the await lets it start a second
+    # loop — duplicate polls and, once ready, a duplicate status refresh.
+    body = _function_body(_read("app.js"), "pollWhileLoading")
+    probe = body.index("await voxcpm2State()")
+    release = body.index("loadPollTimer = null")
+    assert release > probe
+    # The release is the loop ending, before the pending request is taken, so a
+    # resend that reports loading again can start the next loop.
+    assert release < body.index("const pending = pendingRequest;")
+
+
 def test_readiness_reader_returns_the_voxcpm2_state():
     body = _function_body(_read("app.js"), "voxcpm2State")
     assert "/health/ready" in body
