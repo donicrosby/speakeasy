@@ -1,0 +1,155 @@
+{
+ "short": {
+  "pairs": [
+   {
+    "ref": {
+     "elapsed_s": 7.012,
+     "audio_s": 5.76,
+     "rtf": 1.2174
+    },
+    "comb": {
+     "elapsed_s": 6.381,
+     "audio_s": 5.44,
+     "rtf": 1.173
+    }
+   },
+   {
+    "ref": {
+     "elapsed_s": 5.859,
+     "audio_s": 5.12,
+     "rtf": 1.1444
+    },
+    "comb": {
+     "elapsed_s": 5.554,
+     "audio_s": 4.96,
+     "rtf": 1.1199
+    }
+   },
+   {
+    "ref": {
+     "elapsed_s": 5.765,
+     "audio_s": 5.44,
+     "rtf": 1.0598
+    },
+    "comb": {
+     "elapsed_s": 5.744,
+     "audio_s": 5.28,
+     "rtf": 1.0878
+    }
+   }
+  ],
+  "ref_rtf": 1.1405,
+  "comb_rtf": 1.1269,
+  "comb_over_ref": 0.988,
+  "ref_min_max": [
+   1.0598,
+   1.2174
+  ],
+  "comb_min_max": [
+   1.0878,
+   1.173
+  ]
+ },
+ "medium": {
+  "pairs": [
+   {
+    "ref": {
+     "elapsed_s": 17.119,
+     "audio_s": 16.16,
+     "rtf": 1.0594
+    },
+    "comb": {
+     "elapsed_s": 16.944,
+     "audio_s": 15.84,
+     "rtf": 1.0697
+    }
+   },
+   {
+    "ref": {
+     "elapsed_s": 16.541,
+     "audio_s": 16.16,
+     "rtf": 1.0236
+    },
+    "comb": {
+     "elapsed_s": 16.087,
+     "audio_s": 15.2,
+     "rtf": 1.0584
+    }
+   },
+   {
+    "ref": {
+     "elapsed_s": 16.043,
+     "audio_s": 15.2,
+     "rtf": 1.0555
+    },
+    "comb": {
+     "elapsed_s": 18.249,
+     "audio_s": 15.68,
+     "rtf": 1.1638
+    }
+   }
+  ],
+  "ref_rtf": 1.0462,
+  "comb_rtf": 1.0973,
+  "comb_over_ref": 1.0489,
+  "ref_min_max": [
+   1.0236,
+   1.0594
+  ],
+  "comb_min_max": [
+   1.0584,
+   1.1638
+  ]
+ },
+ "long": {
+  "pairs": [
+   {
+    "ref": {
+     "elapsed_s": 56.639,
+     "audio_s": 44.8,
+     "rtf": 1.2643
+    },
+    "comb": {
+     "elapsed_s": 55.273,
+     "audio_s": 46.56,
+     "rtf": 1.1871
+    }
+   },
+   {
+    "ref": {
+     "elapsed_s": 52.988,
+     "audio_s": 48.32,
+     "rtf": 1.0966
+    },
+    "comb": {
+     "elapsed_s": 49.99,
+     "audio_s": 46.88,
+     "rtf": 1.0663
+    }
+   },
+   {
+    "ref": {
+     "elapsed_s": 47.459,
+     "audio_s": 44.8,
+     "rtf": 1.0594
+    },
+    "comb": {
+     "elapsed_s": 50.175,
+     "audio_s": 47.2,
+     "rtf": 1.063
+    }
+   }
+  ],
+  "ref_rtf": 1.1401,
+  "comb_rtf": 1.1055,
+  "comb_over_ref": 0.9696,
+  "ref_min_max": [
+   1.0594,
+   1.2643
+  ],
+  "comb_min_max": [
+   1.063,
+   1.1871
+  ]
+ }
+}

@@ -1,0 +1,46 @@
+
+[clone_cfg0.5] wer=1.000 (12/12) audio=9.3s
+  hyp: Oh, man. Oh. Oh, man. Oh, boy. Wait. That's right. Wait.
+  ref: Hello from an AMD graphics processor. This voice was cloned on ROCm.
+
+[clone_cfg1.5] wer=0.083 (1/12) audio=7.0s
+  hyp: Hello from an AMD graphics processor. This voice was cloned on RoCam.
+  ref: Hello from an AMD graphics processor. This voice was cloned on ROCm.
+
+[clone_cfg1] wer=0.083 (1/12) audio=6.9s
+  hyp: Hello from an AMD Graphics Processor. This voice was cloned on ParoCM.
+  ref: Hello from an AMD graphics processor. This voice was cloned on ROCm.
+
+[clone_cfg2.5] wer=0.083 (1/12) audio=5.3s
+  hyp: Hello from an AMD graphics processor. This voice was cloned on Rockham.
+  ref: Hello from an AMD graphics processor. This voice was cloned on ROCm.
+
+[clone_cfg2] wer=0.167 (2/12) audio=6.6s
+  hyp: Hello from an AMD graphics processor. This voice was cloned on Rock M.
+  ref: Hello from an AMD graphics processor. This voice was cloned on ROCm.
+
+[clone_cfg2_seed8] wer=0.167 (2/12) audio=4.3s
+  hyp: Hello from an AMD graphics processor. This voice was cloned on Rock'em.
+  ref: Hello from an AMD graphics processor. This voice was cloned on ROCm.
+
+[clone_cfg2_seed9] wer=0.000 (0/12) audio=6.2s
+  hyp: Hello from an AMD graphics processor. This voice was cloned on ROCM.
+  ref: Hello from an AMD graphics processor. This voice was cloned on ROCm.
+
+[clone_cfg3] wer=0.167 (2/12) audio=5.3s
+  hyp: Hello from an AMD graphics processor. This voice was cloned on Rock'em.
+  ref: Hello from an AMD graphics processor. This voice was cloned on ROCm.
+
+[clone_cfg4] wer=0.000 (0/12) audio=5.4s
+  hyp: Hello from an AMD graphics processor. This voice was cloned on ROCM.
+  ref: Hello from an AMD graphics processor. This voice was cloned on ROCm.
+
+[clone_cfg5] wer=0.167 (2/12) audio=5.4s
+  hyp: Hello from an AMD graphics processor. This voice was cloned on Rocky M.
+  ref: Hello from an AMD graphics processor. This voice was cloned on ROCm.
+
+[warmup] wer=0.000 (0/12) audio=4.5s
+  hyp: Hello from an AMD graphics processor, this voice was cloned on ROCM.
+  ref: Hello from an AMD graphics processor. This voice was cloned on ROCm.
+
+aggregate WER 0.1742 (23/132)
