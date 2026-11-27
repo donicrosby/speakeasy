@@ -19,6 +19,8 @@ services:
       SPEAKEASY_PORT: "8080"
       SPEAKEASY_BIND: 0.0.0.0
       SPEAKEASY_HF_HOME: /models
+      # Require a bearer token on /v1/* (unset or empty = no auth):
+      # SPEAKEASY_API_KEY: ${SPEAKEASY_API_KEY:-}
       # Override as needed, e.g. SPEAKEASY_WHISPER_MODEL: distil-large-v3
     volumes:
       - hf-models:/models
@@ -42,6 +44,8 @@ services:
       SPEAKEASY_PORT: "8080"
       SPEAKEASY_BIND: 0.0.0.0
       SPEAKEASY_HF_HOME: /models
+      # Require a bearer token on /v1/* (unset or empty = no auth):
+      # SPEAKEASY_API_KEY: ${SPEAKEASY_API_KEY:-}
     volumes:
       - hf-models:/models
     # AMD GPU access: KFD compute device + DRM render nodes. The video and

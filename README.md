@@ -21,6 +21,7 @@ unchanged.
   ROCm wheel is HIP-backed but exposes the same `device="cuda"` API, so one
   code path covers both.
 - **OpenAI response formats** — `json`, `verbose_json`, `text`, `srt`, `vtt`.
+- **Optional auth** — set `SPEAKEASY_API_KEY` and the `/v1/*` endpoints demand it as a bearer token; unset means open, for local dev.
 - **Silero VAD** built in (on by default) to skip silence before
   transcription.
 - **Observability** — per-request `X-Speakeasy-Engine` and
@@ -130,14 +131,54 @@ All settings are environment variables with the `SPEAKEASY_` prefix:
 | `SPEAKEASY_BEAM_SIZE` | `5` | Beam size for Whisper decoding |
 | `SPEAKEASY_VAD_FILTER` | `true` | Silero VAD filter default (Whisper path) |
 | `SPEAKEASY_HF_HOME` | *(unset)* | HuggingFace cache directory — models persist across restarts when set |
+| `SPEAKEASY_API_KEY` | *(unset)* | Bearer token required by the `/v1/*` endpoints. Unset or empty = no auth — see [Authentication](#authentication) |
+
+## Authentication
+
+Auth is off by default: with `SPEAKEASY_API_KEY` unset or empty, every
+endpoint is open. That is for local dev — don't expose a keyless server on
+an untrusted network.
+
+Set it to require a bearer token on the `/v1/*` endpoints. This is the
+header every OpenAI client already sends, so pointing an OpenAI SDK at
+speakeasy with the same key needs no client changes:
+
+```bash
+export SPEAKEASY_API_KEY="$(openssl rand -hex 32)"
+
+curl -H "Authorization: Bearer $SPEAKEASY_API_KEY" \
+     -F file=@note.wav http://localhost:8080/v1/audio/transcriptions
+```
+
+```python
+from openai import OpenAI
+
+client = OpenAI(base_url="http://localhost:8080/v1", api_key=os.environ["SPEAKEASY_API_KEY"])
+```
+
+| Endpoint | Without a valid key |
+|----------|---------------------|
+| `POST /v1/audio/transcriptions`, `GET /v1/models` | `401` — `{"detail": "Invalid or missing API key"}` |
+| `GET /health`, `GET /health/ready` | Open — probes must work without credentials |
+
+It is one shared secret, read at startup and compared in constant time.
+There are no per-client keys, no rotation, and no TLS — terminate TLS and
+anything richer at the reverse proxy.
 
 ## Development
 
 ```bash
-uv sync --all-groups
-uv run pytest tests/   # test suite (mock engines, no GPU or model downloads)
-uvx ruff check src/ tests/   # lint
+uv sync --all-groups --extra cpu       # add --extra tts for the TTS stack
+uv run --extra cpu pytest tests/       # test suite (mock engines, no GPU or model downloads)
+uvx ruff check src/ tests/             # lint
 ```
+
+`uv run` syncs the environment to *its own* extras before running, so pass
+the extras you synced with (or `--no-sync`). A bare `uv run` targets the
+no-accelerator set, which resolves to the CPU torch — in a `rocm101` or
+`cu130` environment that swaps the GPU torch out from under you. The
+accelerator extras are mutually exclusive and no accelerator means CPU;
+`tests/test_lock_default.py` pins both.
 
 ## Design notes
 
