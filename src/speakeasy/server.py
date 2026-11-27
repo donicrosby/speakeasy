@@ -98,6 +98,7 @@ tts_error: str | None = None
 # ready | error`; `voxcpm2_error` is logged only, never returned.
 tts_lock = threading.Lock()
 voxcpm2_state_lock = threading.Lock()
+voxcpm2_create_lock = threading.Lock()  # serialises clone-create (check through save)
 voxcpm2: VoxCPM2Engine | None = None
 voxcpm2_store: ReferenceVoiceStore | None = None
 voxcpm2_state = "disabled"
@@ -430,25 +431,71 @@ def _model_ids() -> list[str]:
     return ids
 
 
-def _voice_objects() -> list[dict]:
-    """Presets first (sorted by id), then saved clones (sorted by id)."""
+def _reverb_voice_objects() -> list[dict]:
+    """Reverb presets first then clones, each group sorted by id; needs a live engine."""
     data = [
-        {"id": p["id"], "object": "voice", "type": "preset", "language": p["language"]}
+        {
+            "id": p["id"],
+            "object": "voice",
+            "type": "preset",
+            "language": p["language"],
+            "engine": "reverb-tts",
+        }
         for p in tts.presets()
     ]
     if voices_store is not None:
         data += [
-            {"id": voice_id, "object": "voice", "type": "clone", **info}
+            {
+                "id": voice_id,
+                "object": "voice",
+                "type": "clone",
+                **info,
+                "engine": "reverb-tts",
+            }
             for voice_id, info in voices_store.listing()
         ]
     return data
 
 
+def _voxcpm2_voice_objects() -> list[dict]:
+    """VoxCPM2 clones sorted by id, read from disk — no loaded engine needed."""
+    if voxcpm2_store is None:
+        return []
+    return [
+        {
+            "id": voice_id,
+            "object": "voice",
+            "type": "clone",
+            "engine": "voxcpm2",
+            "language": info.get("language"),
+            "transcript": info.get("transcript"),
+            "created": info.get("created"),
+        }
+        for voice_id, info in voxcpm2_store.listing()
+    ]
+
+
 @app.get("/v1/audio/voices", dependencies=[Depends(require_auth)])
 def list_voices():
-    if resp := tts_unavailable():
-        return resp
-    return {"object": "list", "languages": tts.languages, "data": _voice_objects()}
+    # 503 only when VoxCPM2 is disabled and Reverb is not ready. Either engine
+    # alone answers 200; presets appear only while Reverb is ready. The Reverb
+    # 503 bodies are byte-identical to today's.
+    if voxcpm2_state == "disabled":
+        if resp := tts_unavailable():
+            return resp
+    data: list[dict] = []
+    if tts is not None:
+        data += _reverb_voice_objects()
+    if voxcpm2_state != "disabled":
+        data += _voxcpm2_voice_objects()
+    body: dict = {
+        "object": "list",
+        "engines": sorted({obj["engine"] for obj in data}),
+        "data": data,
+    }
+    if tts is not None:
+        body["languages"] = tts.languages
+    return body
 
 
 SPEECH_FORMATS = {  # response_format -> (libsndfile format, subtype, content type)
@@ -683,27 +730,64 @@ MAX_REFERENCE_BYTES = 20 * 2**20
 MIN_REFERENCE_SECONDS, MAX_REFERENCE_SECONDS = 1.0, 30.0  # the library warns past 15 s
 
 
-def _decode_reference(data: bytes) -> np.ndarray:
-    """Mono float32 at the codec's sample rate, through PyAV (any browser codec)."""
+def _decode_reference(data: bytes, sampling_rate: int | None = None) -> np.ndarray:
+    """Mono float32 at `sampling_rate`, through PyAV (any browser codec).
+
+    With no `sampling_rate` it decodes at the Reverb engine's own rate; VoxCPM2
+    passes its 16 kHz reference rate, so its clone path never reads Reverb's.
+    """
     from faster_whisper.audio import decode_audio
 
+    rate = tts.sample_rate if sampling_rate is None else sampling_rate
     tmp = tempfile.NamedTemporaryFile(suffix=".audio", delete=False)
     try:
         tmp.write(data)
         tmp.close()
-        return decode_audio(tmp.name, sampling_rate=tts.sample_rate)
+        return decode_audio(tmp.name, sampling_rate=rate)
     finally:
         os.unlink(tmp.name)
+
+
+def _missing_text_422() -> JSONResponse:
+    """The 422 FastAPI raised for a missing `text` before it became optional."""
+    return JSONResponse(
+        status_code=422,
+        content={
+            "detail": [
+                {"type": "missing", "loc": ["body", "text"], "msg": "Field required"}
+            ]
+        },
+    )
+
+
+def _voice_id_taken(voice_id: str) -> bool:
+    """True when either engine's store already owns `voice_id` (ids are shared)."""
+    if voices_store is not None and voices_store.exists(voice_id):
+        return True
+    return voxcpm2_store is not None and voxcpm2_store.exists(voice_id)
 
 
 @app.post("/v1/audio/voices", dependencies=[Depends(require_auth)], status_code=201)
 def create_voice(
     file: UploadFile = File(...),
-    text: str = Form(...),
+    text: str | None = Form(default=None),
     language: str = Form("en"),
     voice_id: str | None = Form(default=None),
+    model: str = Form(default=""),
 ):
     # A plain `def`: the engine lock blocks a threadpool worker, not the loop.
+    # `text` is optional only for VoxCPM2, so required-ness is checked below.
+    if model == "voxcpm2":
+        return _create_voxcpm2_voice(file, text, language, voice_id)
+    return _create_reverb_voice(file, text, language, voice_id)
+
+
+def _create_reverb_voice(
+    file: UploadFile, text: str | None, language: str, voice_id: str | None
+):
+    """Reverb's clone-create path — unchanged, plus the shared-id check."""
+    if text is None:
+        return _missing_text_422()
     if resp := tts_unavailable():
         return resp
     transcript = text.strip()
@@ -725,7 +809,7 @@ def create_voice(
         check_voice_id(voice_id)
     except ValueError as e:
         return _bad_request(str(e))
-    if voices_store.exists(voice_id):  # fast path; re-checked under the lock
+    if _voice_id_taken(voice_id):  # fast path; re-checked under the lock
         return JSONResponse(
             status_code=409,
             content={"error": {"message": f"voice {voice_id!r} already exists"}},
@@ -751,7 +835,7 @@ def create_voice(
     # Serialise only exists-recheck → clone → save under the engine's RLock.
     # `clone` re-acquires the same lock (reentrant), so the nested acquire is safe.
     with tts._lock:
-        if voices_store.exists(voice_id):
+        if _voice_id_taken(voice_id):
             return JSONResponse(
                 status_code=409,
                 content={"error": {"message": f"voice {voice_id!r} already exists"}},
@@ -773,8 +857,95 @@ def create_voice(
     }
 
 
+VOXCPM2_REFERENCE_RATE = 16000
+
+
+def _create_voxcpm2_voice(
+    file: UploadFile, text: str | None, language: str, voice_id: str | None
+):
+    """Store a VoxCPM2 reference clone — the model never runs at create time."""
+    # The engine gates its own request: `not_loaded` starts the single load and
+    # answers 503; `loading`, `error` and `disabled` answer their own 503.
+    if resp := _ensure_voxcpm2_loading():
+        return resp
+    if resp := voxcpm2_unavailable():
+        return resp
+    store = voxcpm2_store
+    if store is None:
+        return voxcpm2_503("disabled")
+    transcript = text.strip() if text is not None else None
+    if transcript == "":
+        transcript = None  # a blank form value means "no transcript"
+    voice_id = voice_id or f"clone-{secrets.token_hex(4)}"
+    if tts is not None and any(p["id"] == voice_id for p in tts.presets()):
+        return JSONResponse(
+            status_code=409,
+            content={"error": {"message": f"{voice_id!r} is a preset voice"}},
+        )
+    try:
+        check_voice_id(voice_id)
+    except ValueError as e:
+        return _bad_request(str(e))
+    data = file.file.read(MAX_REFERENCE_BYTES + 1)
+    if len(data) > MAX_REFERENCE_BYTES:
+        return JSONResponse(
+            status_code=413,
+            content={"error": {"message": "reference audio over 20 MB"}},
+        )
+    # Decode at this engine's reference rate, never Reverb's; not under any lock.
+    try:
+        samples = _decode_reference(data, VOXCPM2_REFERENCE_RATE)
+    except Exception:  # noqa: BLE001 — any decoder failure is a bad upload
+        return _bad_request("could not decode the reference audio")
+    duration = len(samples) / VOXCPM2_REFERENCE_RATE
+    if not MIN_REFERENCE_SECONDS <= duration <= MAX_REFERENCE_SECONDS:
+        return _bad_request(
+            f"reference is {duration:.1f}s; give it 3-10 s of speech "
+            f"({MIN_REFERENCE_SECONDS:g}-{MAX_REFERENCE_SECONDS:g} accepted)"
+        )
+    # One create lock spans the both-store existence check through the save, so
+    # two creates of one id give one 201 and one 409. Never `tts_lock`.
+    with voxcpm2_create_lock:
+        if _voice_id_taken(voice_id):
+            return JSONResponse(
+                status_code=409,
+                content={"error": {"message": f"voice {voice_id!r} already exists"}},
+            )
+        created = store.save(
+            voice_id, samples, VOXCPM2_REFERENCE_RATE, transcript, language=language
+        )
+    log.info(
+        "voxcpm2 voice %s created (%.1fs reference, language=%s)",
+        voice_id,
+        duration,
+        language,
+    )
+    # Built from the values create already holds (and the save's `created`): the
+    # saved files are never read back, so a concurrent delete cannot break it.
+    return {
+        "id": voice_id,
+        "object": "voice",
+        "type": "clone",
+        "engine": "voxcpm2",
+        "language": language,
+        "transcript": transcript,
+        "created": created,
+    }
+
+
 @app.delete("/v1/audio/voices/{voice_id}", dependencies=[Depends(require_auth)])
 def delete_voice(voice_id: str):
+    # Resolve against the VoxCPM2 store first — a filesystem op needing no loaded
+    # engine. Any other id falls through to the Reverb path exactly as on main,
+    # the `tts_unavailable()` gate included, so Reverb's status codes are unchanged.
+    if voxcpm2_store is not None and voxcpm2_store.exists(voice_id):
+        voxcpm2_store.delete(voice_id)
+        return {
+            "id": voice_id,
+            "object": "voice",
+            "deleted": True,
+            "engine": "voxcpm2",
+        }
     if resp := tts_unavailable():
         return resp
     if not voices_store.delete(voice_id):  # unknown, a preset, or an invalid id
@@ -782,7 +953,12 @@ def delete_voice(voice_id: str):
             status_code=404,
             content={"error": {"message": f"no saved voice {voice_id!r}"}},
         )
-    return {"id": voice_id, "object": "voice", "deleted": True}
+    return {
+        "id": voice_id,
+        "object": "voice",
+        "deleted": True,
+        "engine": "reverb-tts",
+    }
 
 
 @app.post("/v1/audio/transcriptions", dependencies=[Depends(require_auth)])
