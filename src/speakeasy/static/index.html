@@ -1,0 +1,69 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>speakeasy</title>
+<link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+<header>
+  <h1>speakeasy</h1>
+  <p id="status">loading…</p>
+  <label>API key
+    <input id="apiKey" type="password" autocomplete="off" placeholder="SPEAKEASY_API_KEY">
+  </label>
+</header>
+<main>
+  <section id="panel-listen">
+    <h2>Listen</h2>
+    <p id="listen-state" class="state">idle</p>
+    <button id="listen-record" type="button">Record</button>
+    <button id="listen-stop" type="button" disabled>Stop</button>
+    <label>Upload
+      <input id="listen-file" type="file" accept="audio/*">
+    </label>
+    <textarea id="listen-text" placeholder="transcript appears here"></textarea>
+    <p id="listen-meta" class="meta"></p>
+    <p id="listen-error" class="error"></p>
+  </section>
+  <section id="panel-speak">
+    <h2>Speak</h2>
+    <textarea id="speak-text" placeholder="type text to speak"></textarea>
+    <label>Voice
+      <select id="speak-voice"></select>
+    </label>
+    <label>Language
+      <select id="speak-language"></select>
+    </label>
+    <button id="speak-go" type="button">Speak</button>
+    <audio id="speak-audio" controls></audio>
+    <a id="speak-download" download="speech.wav">Download</a>
+    <p id="speak-meta" class="meta"></p>
+    <p id="speak-error" class="error"></p>
+  </section>
+  <section id="panel-clone">
+    <h2>Clone a voice</h2>
+    <p id="clone-state" class="state">idle</p>
+    <button id="clone-record" type="button">Record</button>
+    <button id="clone-stop" type="button" disabled>Stop</button>
+    <label>Upload
+      <input id="clone-file" type="file" accept="audio/*">
+    </label>
+    <button id="clone-use-last" type="button">use last transcript</button>
+    <textarea id="clone-text" placeholder="exact transcript of the recording"></textarea>
+    <label>Language
+      <select id="clone-language"></select>
+    </label>
+    <label>Name
+      <input id="clone-name" type="text" placeholder="optional">
+    </label>
+    <button id="clone-save" type="button">Save</button>
+    <p id="clone-meta" class="meta"></p>
+    <p id="clone-error" class="error"></p>
+    <ul id="clone-list"></ul>
+  </section>
+</main>
+<script src="/static/app.js" defer></script>
+</body>
+</html>

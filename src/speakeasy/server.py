@@ -9,6 +9,7 @@ Endpoints:
     GET  /v1/models                — list loaded models
     GET  /health                   — liveness
     GET  /health/ready             — readiness (models loaded)
+    GET  /                         — static web UI (assets under /static/*)
 """
 
 from __future__ import annotations
@@ -35,8 +36,9 @@ from fastapi import (
     Security,
     UploadFile,
 )
-from fastapi.responses import JSONResponse, Response
+from fastapi.responses import FileResponse, JSONResponse, Response
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
+from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
 from .config import Settings, resolve_device_compute
@@ -176,6 +178,28 @@ def tts_unavailable() -> JSONResponse | None:
 
 
 app = FastAPI(title="speakeasy", version="0.1.0", lifespan=lifespan)
+
+# Static UI at `/` — three files served as-is, no build step, no third-party
+# script (spec §7). The CSP has no `unsafe-inline`, so the page carries no
+# inline <script>/<style> and no inline event handlers (SEC-09/SEC-10).
+STATIC = Path(__file__).parent / "static"
+CSP = (
+    "default-src 'self'; media-src 'self' blob:; connect-src 'self'; "
+    "img-src 'self' data:; base-uri 'none'; frame-ancestors 'none'"
+)
+app.mount("/static", StaticFiles(directory=STATIC), name="static")
+
+
+@app.get("/", include_in_schema=False)
+def index():
+    return FileResponse(
+        STATIC / "index.html",
+        headers={
+            "Content-Security-Policy": CSP,
+            "X-Content-Type-Options": "nosniff",
+            "Referrer-Policy": "no-referrer",
+        },
+    )
 
 
 @app.get("/health")
