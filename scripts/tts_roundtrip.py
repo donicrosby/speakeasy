@@ -140,7 +140,7 @@ def _speech_payload(
     voice,
     speed,
     *,
-    model=None,
+    model=REVERB_ENGINE,
     cfg=None,
     design=None,
     style=None,
@@ -245,7 +245,7 @@ def speak(
     speed,
     step,
     *,
-    model=None,
+    model=REVERB_ENGINE,
     cfg=None,
     design=None,
     style=None,
@@ -424,7 +424,12 @@ def clone(base, key, path, text, step) -> bool:
     with open(path, "rb") as f:
         data = f.read()
     body, ctype = _multipart(
-        {"text": text, "language": "en", "voice_id": CLONE_ID},
+        {
+            "model": REVERB_ENGINE,
+            "text": text,
+            "language": "en",
+            "voice_id": CLONE_ID,
+        },
         {"file": (os.path.basename(path), data, "audio/wav")},
     )
     status, resp, _ = _request(
