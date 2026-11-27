@@ -14,7 +14,10 @@ ReverbEngine (speech synthesis) lives here too, behind the optional `tts` extra.
 
 from __future__ import annotations
 
+import gc
+import math
 import os
+import re
 import tempfile
 import threading
 import time
@@ -211,6 +214,107 @@ class ReverbEngine:
             t0 = time.monotonic()
             audio = self._tts.generate(text, voice, language, seed=seed, speed=speed)
         return audio, time.monotonic() - t0
+
+
+class BadTake(Exception):
+    """A take the library itself would call bad: too much audio per text token."""
+
+
+def _flatten_text(text: str) -> str:
+    """The library flattens newlines and whitespace runs before tokenising."""
+    return re.sub(r"\s+", " ", text.replace("\n", " "))
+
+
+class VoxCPM2Engine:
+    """VoxCPM2 — 48 kHz speech, voice design, style hints, reference cloning.
+
+    One model on one device. `synthesize` holds one lock, because the library
+    seeds through torch's global generator and a second call would otherwise
+    race the sampler. The server loads it lazily and drops it with `unload`,
+    which the caller must serialise against `synthesize`.
+    """
+
+    # One audio patch is 0.16 s; the library regenerates a take whose patch
+    # count reaches six per text token. The server surfaces that instead.
+    PATCH_SECONDS = 0.16
+    BAD_TAKE_RATIO = 6.0
+
+    def __init__(self, model: str, device: str):
+        import torch
+        from voxcpm import VoxCPM
+
+        if torch.version.hip is not None:
+            # MIOpen's default find mode costs 10-11 s per NEW output length.
+            # Disable cuDNN/MIOpen on HIP only, as ReverbEngine does.
+            torch.backends.cudnn.enabled = False
+        self._torch = torch
+        t0 = time.monotonic()
+        self._model = VoxCPM.from_pretrained(
+            model,
+            load_denoiser=False,
+            optimize=False,
+            device=None if device == "auto" else device,
+        )
+        self.load_seconds = time.monotonic() - t0
+        self.sample_rate = self._model.tts_model.sample_rate
+        self._lock = threading.RLock()
+
+    @property
+    def name(self) -> str:
+        return "voxcpm2"
+
+    def synthesize(
+        self,
+        text: str,
+        *,
+        reference: str | None = None,
+        prompt_text: str | None = None,
+        cfg: float = 2.0,
+        seed: int | None = None,
+    ) -> tuple[np.ndarray, float]:
+        """float32 samples at `sample_rate`, and the seconds it took.
+
+        The reference goes in as continuation audio (`prompt_wav_path` with its
+        `prompt_text`) when its transcript is known, and as voice cloning
+        (`reference_wav_path`) when it is not — never both. Raises `BadTake`
+        when the take carries six audio patches or more per text token.
+        """
+        call = {
+            "text": text,
+            "cfg_value": cfg,
+            "inference_timesteps": 10,
+            "min_len": 2,
+            "max_len": 4096,
+            "normalize": False,
+            "denoise": False,
+            "retry_badcase": False,
+        }
+        if reference is not None:
+            if prompt_text is not None:
+                call["prompt_wav_path"] = reference
+                call["prompt_text"] = prompt_text
+            else:
+                call["reference_wav_path"] = reference
+
+        with self._lock:
+            if seed is not None:
+                self._torch.manual_seed(seed)
+            t0 = time.monotonic()
+            audio = self._model.generate(**call)
+            elapsed = time.monotonic() - t0
+            tokens = len(self._model.tts_model.text_tokenizer(_flatten_text(text)))
+
+        audio = np.asarray(audio, dtype=np.float32)
+        patches = math.floor(len(audio) / self.sample_rate / self.PATCH_SECONDS)
+        if patches >= self.BAD_TAKE_RATIO * tokens:
+            raise BadTake(f"take is {patches} audio patches for {tokens} text tokens")
+        return audio, elapsed
+
+    def unload(self) -> None:
+        """Drop the model and release its memory; the caller holds the TTS lock."""
+        self._model = None
+        self._torch.cuda.empty_cache()
+        gc.collect()
 
 
 def probe_duration(audio_bytes: bytes) -> float | None:
