@@ -1,6 +1,12 @@
 # Speakeasy VoxCPM2 (second TTS engine)
 
-> Spec v1.2 (rev2 — closes twelve must-fixes from r1 re-review). Validated against `voxcpm` 2.0.3 (PyPI wheel, `openbmb/VoxCPM2` weights), spike 005 (gfx1151), speakeasy `main` `c20645e`. Contract for Reverb: `docs/specs/tts-voice-cloning-ui.md` — this spec extends it and does not change it.
+> Spec v1.3 (rev3 — closes MF-25 delete-gate and MF-26 idle-unload timer guard). Validated against `voxcpm` 2.0.3 (PyPI wheel, `openbmb/VoxCPM2` weights), spike 005 (gfx1151), speakeasy `main` `c20645e`. Contract for Reverb: `docs/specs/tts-voice-cloning-ui.md` — this spec extends it and does not change it.
+
+### Revision summary (r3)
+
+**MF-25 — delete gate keeps Reverb's pinned contract.** The VoxCPM2-store half answers when the store exists (filesystem operation — no engine needed) and the state is not `disabled`; the Reverb-store fall-through gates on `tts_unavailable()` exactly as today — a delete of a Reverb clone while Reverb is not ready answers Reverb's fixed 503 in every VoxCPM2 state, no Reverb status change. §5.4 states it once; the state table's delete column, §7.5, and §10 agree.
+
+**MF-26 — idle-unload timer guarded by engine state; loader resets last-used at completion.** The timer unloads only when `voxcpm2_state == 'ready'` — a tick in any other state skips. The loader sets `voxcpm2_last_used = time.monotonic()` at load completion so the idle clock measures from the ready transition. Two race rows added to §7.5: (a) timer tick during load (pre-`tts_lock` phase) guarded by the state check — no clobber of `loading`; (b) timer tick just after load completes guarded by the fresh last-used — no reload thrash.
 
 ### Revision summary (r2)
 
@@ -274,7 +280,7 @@ The server builds the library input:
 
 ### 5.4 `DELETE /v1/audio/voices/{voice_id}`
 
-**Auth:** bearer token. **State gate:** answers when either engine's store exists (the delete is a filesystem operation and does not need a loaded engine).
+**Auth:** bearer token. **State gate — per store.** The delete is a two-store operation: the route resolves the id against the VoxCPM2 store first. A VoxCPM2 clone is deleted from disk immediately (a filesystem operation that does not need a loaded engine) and answers per the state table (§6). Any id not found in the VoxCPM2 store falls through to the Reverb path exactly as on `main` today — `tts_unavailable()` gates the Reverb-store half, so a delete of a Reverb clone while Reverb is not ready answers Reverb's fixed 503 in every VoxCPM2 state, and the VoxCPM2 state is irrelevant to it. This means: a voxcpm2-enabled deployment, for a Reverb clone while Reverb is loading, disabled, or in error, answers the same 503 as today — no Reverb status change.
 
 **Response 200:**
 
@@ -317,6 +323,8 @@ The server builds the library input:
 | `loading`     | 503 — "is still loading"              | 503 — "is still loading"             | VoxCPM2 clones from disk            | 200 — delete from disk               | `"voxcpm2": "loading"`              | `voxcpm2` present                  |
 | `ready`       | 200 — generate audio; **update last-used** | 201 — store reference (no model call) | VoxCPM2 clones from disk | 200 — delete from disk | `"voxcpm2": "ready"`          | `voxcpm2` present                  |
 | `error`       | 503 — "encountered an error"          | 503 — "encountered an error"         | VoxCPM2 clones from disk            | 200 — delete from disk               | `"voxcpm2": "error"`                | `voxcpm2` present                  |
+
+The delete column covers VoxCPM2-clone deletes only. The Reverb-store fall-through (any id not found in the VoxCPM2 store) gates on `tts_unavailable()` exactly as on `main` today — delete of a Reverb clone follows the Reverb contract unchanged, answering Reverb's fixed 503 in every VoxCPM2 state.
 
 ### Reverb side (unchanged, shown for comparison)
 
@@ -362,7 +370,7 @@ The loader thread, `_load_voxcpm2()`:
 - Imports `voxcpm`, `torch` inside the function body (never at module import time).
 - Acquires `tts_lock` for the load itself (model construction is not thread-safe).
 - Constructs `VoxCPM2Engine` and publishes it (`voxcpm2 = engine`).
-- Sets state to `ready` and releases `tts_lock`.
+- Sets state to `ready`, sets `voxcpm2_last_used = time.monotonic()` (the idle clock starts at the moment the engine became ready — under `tts_lock`, so no tick races the ready transition), then releases `tts_lock`.
 - While the loader waits for `tts_lock` behind a Reverb synthesis, the state is `loading` — arriving VoxCPM2 requests see `loading` and answer the loading 503.
 - On failure: sets state to `error` under `tts_lock`, stores the exception text in `voxcpm2_error` (for logs only — never returned to clients). Nothing auto-retries.
 
@@ -373,9 +381,10 @@ The loader never creates the store — the store already exists eagerly from sta
 A daemon thread, started after the first successful load, runs every 15 s:
 
 1. Acquires `tts_lock` **without blocking** (`acquire(blocking=False)`). If it cannot take the lock, sleeps and tries again — a running request owns it.
-2. Checks `time.monotonic() - voxcpm2_last_used > tts_voxcpm_idle_seconds`.
-3. If so: drops the model (`voxcpm2 = None`), calls `torch.cuda.empty_cache()` and `gc.collect()`, sets state to `not_loaded`. The store (`voxcpm2_store`) is **not** dropped — it survives the unload.
-4. Releases the lock.
+2. Checks `voxcpm2_state == 'ready'` **first**. In any other state (`loading`, `error`, `disabled`, `not_loaded`) the tick has nothing to unload and skips — this guard prevents a tick in the loader's pre-`tts_lock` phase from clobbering `loading` and prevents a tick just after a load completes from unloading a freshly loaded engine whose last-used is still on its way (the page's auto-send may be up to 5 s behind).
+3. Checks `time.monotonic() - voxcpm2_last_used > tts_voxcpm_idle_seconds`. When the loader sets `voxcpm2_last_used` at load completion (§7.2), the idle clock measures from the ready transition — no stale-last-used window after the load.
+4. If the idle time is exceeded: drops the model (`voxcpm2 = None`), calls `torch.cuda.empty_cache()` and `gc.collect()`, sets state to `not_loaded`. The store (`voxcpm2_store`) is **not** dropped — it survives the unload.
+5. Releases the lock.
 
 When `tts_voxcpm_idle_seconds` is `0`, the timer thread is never started — the engine stays loaded.
 
@@ -424,6 +433,9 @@ This ensures at most one inference runs at any moment across both engines, each 
 | Clone-create in `not_loaded` / `loading` / `error`           | Answers 503 with that state's reason; in `not_loaded` starts the single-flight load (same path as speech). |
 | Clone-create in `ready`                                      | Answers 201 — store reference, no model call. Does not take `tts_lock`; uses `voxcpm2_create_lock`; does not bump last-used. |
 | Two concurrent clone-creates for the same id                  | Serialized under `voxcpm2_create_lock` from the both-stores existence check through the save. Exactly one returns 201; the other 409. Cross-engine collision (Reverb `.npz` vs VoxCPM2 `.json`) is covered: both stores are checked under the create lock. |
+| Delete of a Reverb clone while Reverb is not ready (loading / disabled / error) | The id is not found in the VoxCPM2 store; the fall-through to the Reverb path gates on `tts_unavailable()` — answers Reverb's fixed 503 in every VoxCPM2 state. No Reverb status change. |
+| Timer tick while a load is in flight (loader's pre-`tts_lock` phase, no lock held) | The timer skips — `voxcpm2_state != 'ready'` (§7.3 step 2 guards the tick). Without the guard a tick would take `tts_lock` (free during imports), find a stale last-used, and clobber `loading → not_loaded`, breaking the single-flight invariant (SEC-V6) and misreporting `/health/ready`. |
+| Timer tick just after a load completes (state `ready`, last-used stale before first speech) | The timer skips — `voxcpm2_last_used` was set to `time.monotonic()` at load completion under `tts_lock` (§7.2), so the idle clock started at the ready transition. Without the reset a tick could unload the freshly loaded engine before the page's ≤5 s auto-send bumps `last_used`, causing reload thrash that degrades D3's one-reload contract into a probabilistic multiple. |
 
 ## 8. On-disk contract
 
@@ -498,7 +510,7 @@ For every pair where a clone is checked and then used — the clone can vanish b
 | Pair                                              | Vanished between calls → outcome                                           |
 |---------------------------------------------------|----------------------------------------------------------------------------|
 | `exists(voice_id)` → `unlink()` (VoxCPM2 store)   | `unlink(missing_ok=True)` — both deletes report success. Same as Reverb.   |
-| `exists(voice_id)` (Reverb store) → `delete()`    | VoxCPM2 store's `delete` first checks its own root, then the Reverb store; same `missing_ok` contract. |
+| `exists(voice_id)` (Reverb store) → `delete()`    | Id not found in VoxCPM2 store → fall through to Reverb path. The Reverb path gates on `tts_unavailable()` exactly as on `main` today — while Reverb is not ready the delete answers Reverb's fixed 503 before reaching the filesystem check. |
 
 ### Delete during load / unload
 
@@ -657,7 +669,7 @@ Every scenario runs without a GPU. Tests fake `voxcpm` through `sys.modules`; no
 
 **Scenario: response formats at 48 kHz.** With a stub returning 1 s of float32 audio. When speech is called with each format. Then `wav` byte count matches 48000 * 2 bytes; `pcm` is exactly 96000 bytes with `audio/pcm`. **Test:** `test_voxcpm2_response_formats` (`tests/test_voxcpm2_api.py`).
 
-**Scenario: 503, 401 states.** `not_loaded`/`loading`/`error` each return 503 with the correct fixed message; missing key returns 401. **Test:** `test_voxcpm2_speech_503_401` (`tests/test_voxcpm2_api.py`).
+**Scenario: 503, 401 states.** `disabled`/`not_loaded`/`loading`/`error` each return 503 with the correct fixed message (§5.1); missing key returns 401. **Test:** `test_voxcpm2_speech_503_401` (`tests/test_voxcpm2_api.py`).
 
 **Scenario: clone deleted between resolution and library call.** Given a store whose `exists` returns `True` but whose `.wav` is missing. When speech is called with that clone's id. Then `FileNotFoundError` from the library → caught → 400 `"unknown voice"`, never 500. **Test:** `test_voxcpm2_clone_deleted_before_library_call` (`tests/test_voxcpm2_api.py`).
 
@@ -688,6 +700,8 @@ Every scenario runs without a GPU. Tests fake `voxcpm` through `sys.modules`; no
 **Scenario: list when both engines unavailable → 503.** With `tts_voxcpm_enabled=False` (voxcpm2 disabled) and `tts_state` not `ready`. When `GET /v1/audio/voices` is called. Then response is 503. With voxcpm2 enabled in any state (even `not_loaded` — clones from disk), the listing answers 200. **Test:** `test_list_voices_503_both_unavailable` (`tests/test_voxcpm2_api.py`).
 
 **Scenario: clone deleted mid-listing absent.** A clone whose files vanish between the listing scan and the read is absent from `data` — no 500. **Test:** `test_list_voices_voxcpm2_clone_deleted_mid_listing` (`tests/test_voxcpm2_api.py`).
+
+**Scenario: languages present when Reverb ready, omitted otherwise.** With `tts_state="ready"` (Reverb loaded). When `GET /v1/audio/voices` is called. Then `languages` is present with today's pinned value `["de","en","es","fr","it","pl","pt"]`. With `tts_state="disabled"` (Reverb not ready). Then `languages` is absent from the response body — the page keeps the language-select content across re-renders and refills it when a later listing carries the key. **Test:** `test_list_voices_languages_present_when_reverb_ready` (`tests/test_voxcpm2_api.py`).
 
 ### 12.9 UI
 
