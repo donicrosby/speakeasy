@@ -1440,6 +1440,97 @@ def test_voxcpm2_clone_id_collides_with_reverb_clone(client, monkeypatch, tmp_pa
     assert rstore.exists("shared-id") is False
 
 
+def test_voxcpm2_clone_id_collides_with_reverb_clone_on_disk(
+    client, monkeypatch, voices_root
+):
+    """A Reverb `.npz` on disk is 409 for a VoxCPM2 create with Reverb not loaded.
+
+    Reverb's store object is absent while Reverb is disabled, loading or in
+    error, but its clones are still on disk, so the id must still collide.
+    """
+    root = voices_root
+    root.mkdir()
+    np.savez(
+        root / "clone-taken.npz",
+        codes=np.zeros((8, 250), np.int16),
+        text="ref words",
+        language="en",
+    )
+    monkeypatch.setattr(server, "voices_store", None)  # Reverb not loaded
+    store, _ = _vox_ready(monkeypatch, root)
+
+    r = _create(client, text="hi", voice_id="clone-taken")
+
+    assert r.status_code == 409
+    assert r.json() == {"error": {"message": "voice 'clone-taken' already exists"}}
+    assert store.exists("clone-taken") is False
+
+
+def test_voxcpm2_clone_id_collides_with_reverb_clone_when_disabled(
+    client, monkeypatch, voices_root
+):
+    """The same disk collision with the Reverb engine disabled (`tts` is None)."""
+    root = voices_root
+    root.mkdir()
+    np.savez(
+        root / "clone-off.npz",
+        codes=np.zeros((8, 250), np.int16),
+        text="ref words",
+        language="en",
+    )
+    monkeypatch.setattr(server, "tts", None)
+    monkeypatch.setattr(server, "tts_state", "disabled")
+    monkeypatch.setattr(server, "voices_store", None)
+    store, _ = _vox_ready(monkeypatch, root)
+
+    r = _create(client, text="hi", voice_id="clone-off")
+
+    assert r.status_code == 409
+    assert r.json() == {"error": {"message": "voice 'clone-off' already exists"}}
+    assert store.exists("clone-off") is False
+
+
+def test_voice_id_lookup_creates_no_voices_directory(client, monkeypatch, voices_root):
+    """The disk fallback builds a path but never a store: nothing is created."""
+    root = voices_root  # deliberately absent
+    monkeypatch.setattr(server, "voices_store", None)
+    _vox_ready(monkeypatch, root)
+
+    # 400: an id that fails validation never becomes a path, creates nothing.
+    r = _create(client, text="hi", voice_id="../escape")
+    assert r.status_code == 400
+    assert not root.exists()
+
+    # 409: a preset collision, still with no directory created.
+    monkeypatch.setattr(server, "tts", ReverbStub())
+    monkeypatch.setattr(server, "tts_state", "ready")
+    r = _create(client, text="hi", voice_id="en_male_narrator_1")
+    assert r.status_code == 409
+    assert not root.exists()
+
+    # The lookup itself, when it runs, builds a path but never a store: an id
+    # that fails validation and one that is free both leave the directory absent.
+    assert server._voice_id_taken("../escape") is False
+    assert server._voice_id_taken("nowhere") is False
+    assert not root.exists()
+
+
+def test_voxcpm2_clone_no_false_collision(client, monkeypatch, voices_root):
+    """An id only in the VoxCPM2 store is 409; an id nowhere is 201."""
+    root = voices_root
+    monkeypatch.setattr(server, "voices_store", None)  # Reverb not loaded
+    store, _ = _vox_ready(monkeypatch, root)
+    store.save("only-vox", np.zeros(16000, dtype=np.float32), 16000, None)
+
+    r = _create(client, text="hi", voice_id="only-vox")
+    assert r.status_code == 409
+    assert r.json() == {"error": {"message": "voice 'only-vox' already exists"}}
+
+    r = _create(client, text="hi", voice_id="free-id")
+    assert r.status_code == 201
+    assert store.exists("free-id")
+
+
 def test_voxcpm2_clone_preset_name_409(client, monkeypatch, voices_root):
     store, _ = _vox_ready(monkeypatch, voices_root)
     monkeypatch.setattr(server, "tts", ReverbStub())
