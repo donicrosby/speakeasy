@@ -263,14 +263,14 @@ A single static page at `/` with three panels in a grid. Dark theme, compact. No
 
 ### 7.3 Panel: Speak
 
-- **Controls:** a textarea, a voice `<select>` (optgroups Presets / Saved, populated from `GET /v1/audio/voices`), a language `<select>` (defaults to chosen voice's language), a Speak button.
+- **Controls:** a textarea, a voice `<select>` (optgroups Presets / Saved, populated from `GET /v1/audio/voices`), a language `<select>` (defaults to chosen voice's language), a Speak button. The voice select opens on `en_male_narrator_1` (the API default) and its language follows it; a reload of the voices list keeps whatever the user chose.
 - **Request:** `POST /v1/audio/speech` JSON with `response_format: "wav"`.
 - **Result:** `<audio controls>` from the blob URL, a Download link, audio duration, elapsed time, × real time.
 - **Loading state:** button disabled, reads "working…". TTS on CPU can take tens of seconds; other panels stay interactive.
 
 ### 7.4 Panel: Clone a voice
 
-- **Controls:** Record/Upload (reuses the Listen panel's recording), a transcript textarea with "use last transcript" button, language `<select>`, an optional voice name input, Save button.
+- **Controls:** Record/Upload (reuses the Listen panel's recording), a transcript textarea with "use last transcript" button, language `<select>`, an optional voice name input, Save button. The language select opens on `en`; a reload of the voices list keeps whatever the user chose.
 - **Client-side:** enforces 1–30 s; hints 3–10 s for best quality.
 - **Request:** `POST /v1/audio/voices` multipart.
 - **Result:** new voice appears in the Speak select. Saved voices listed below with Delete buttons → `DELETE /v1/audio/voices/{id}`, confirmed with `window.confirm`.

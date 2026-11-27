@@ -183,3 +183,43 @@ def test_503_is_endpoint_aware():
     assert "transcriptions" not in tts_paths
     # The Whisper side carries its own, non-TTS line.
     assert "The speech models are still loading" in js
+
+
+# --- default voice and language -----------------------------------------
+
+
+def _function_body(js: str, name: str) -> str:
+    """The text of the top-level ``function name(...)`` up to its closing brace."""
+    start = js.index(f"function {name}(")
+    end = js.index("\n}", start)
+    return js[start:end]
+
+
+def test_default_voice_and_language_constants():
+    # The page opens on the API's default voice and on English, not on
+    # whichever option a rebuilt <select> happens to land on ("de" sorts first).
+    js = _read("app.js")
+    assert re.search(r'DEFAULT_VOICE\s*=\s*"en_male_narrator_1"', js)
+    assert re.search(r'DEFAULT_LANGUAGE\s*=\s*"en"', js)
+
+
+def test_fill_languages_keeps_the_current_choice():
+    body = _function_body(_read("app.js"), "fillLanguages")
+    # Reads the value before the rebuild and keeps it when still offered...
+    assert "select.value" in body
+    assert re.search(r"languages\.includes\(\s*current\s*\)", body)
+    # ...else falls back to the default language, then the first option.
+    assert re.search(r"languages\.includes\(\s*DEFAULT_LANGUAGE\s*\)", body)
+    assert re.search(r"languages\[\s*0\s*\]", body)
+
+
+def test_fill_voices_keeps_the_current_voice_and_defaults_to_the_api_default():
+    body = _function_body(_read("app.js"), "fillVoices")
+    # Keeps the selected voice when it is still in the list...
+    assert "select.value" in body
+    assert re.search(r"ids\.includes\(\s*current\s*\)", body)
+    # ...else falls back to the API's default voice, then the first option...
+    assert re.search(r"ids\.includes\(\s*DEFAULT_VOICE\s*\)", body)
+    assert re.search(r"ids\[\s*0\s*\]", body)
+    # ...and the language follows the chosen voice.
+    assert "syncSpeakLanguage()" in body

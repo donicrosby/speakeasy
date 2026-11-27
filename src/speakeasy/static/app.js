@@ -24,6 +24,12 @@ const MSG = {
   working: "working…",
 };
 
+// The server's default preset voice, and the language the page opens on. A
+// rebuilt <select> lands on its first option and "de" sorts first, so both are
+// set explicitly or an English speaker gets a German voice by accident.
+const DEFAULT_VOICE = "en_male_narrator_1";
+const DEFAULT_LANGUAGE = "en";
+
 // The most recent recording, shared with the Clone panel.
 let lastRecording = null;
 let voicesLoaded = false;
@@ -287,12 +293,20 @@ let speakUrl = null;
 function fillLanguages(languages) {
   for (const id of ["speak-language", "clone-language"]) {
     const select = $(id);
+    const current = select.value; // read before the rebuild resets it
     select.textContent = "";
     for (const code of languages) {
       const option = document.createElement("option");
       option.value = code;
       option.textContent = code;
       select.appendChild(option);
+    }
+    if (languages.includes(current)) {
+      select.value = current; // a reload must never drop the user's choice
+    } else if (languages.includes(DEFAULT_LANGUAGE)) {
+      select.value = DEFAULT_LANGUAGE;
+    } else {
+      select.value = languages[0] || "";
     }
   }
 }
@@ -312,9 +326,18 @@ function addGroup(select, label, voices) {
 
 function fillVoices(items) {
   const select = $("speak-voice");
+  const current = select.value; // read before the rebuild resets it
   select.textContent = "";
   addGroup(select, "Presets", items.filter((v) => v.type === "preset"));
   addGroup(select, "Saved", items.filter((v) => v.type === "clone"));
+  const ids = items.map((v) => v.id);
+  if (ids.includes(current)) {
+    select.value = current; // a reload must never drop the user's voice
+  } else if (ids.includes(DEFAULT_VOICE)) {
+    select.value = DEFAULT_VOICE;
+  } else {
+    select.value = ids[0] || "";
+  }
   syncSpeakLanguage();
 }
 
