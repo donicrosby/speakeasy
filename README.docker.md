@@ -8,10 +8,11 @@ Production container images for speakeasy, in two GPU flavors:
 | ROCm | `Dockerfile.rocm` | ROCm 10.1 runtime as pip wheels (`rocm101` extra), CTranslate2 built from source (HIP) | AMD gfx1151 (Strix Halo) |
 
 Both images run the same server (`speakeasy` → OpenAI-compatible
-transcription API) on port **8080**, and both are built with the TTS stack
-(`--extra tts`: reverb-tts + torchaudio). On first start the Whisper
-(and optionally Moonshine) models are downloaded into the Hugging Face
-cache; mount a volume at `/models` to avoid re-downloading.
+transcription and text-to-speech API) on port **8080**, and both are built
+with the TTS stack (`--extra tts`: reverb-tts + torchaudio). On first start
+the Whisper (and optionally Moonshine) models are downloaded into the Hugging
+Face cache; TTS adds a one-time download of about 1.1 GB of Reverb weights and
+its codec. Mount a volume at `/models` to avoid re-downloading.
 
 ## Pulling prebuilt images
 
@@ -86,6 +87,25 @@ One compose file, two services — start the one matching your GPU:
 docker compose up cuda    # or: docker compose up rocm
 ```
 
+### Web UI
+
+Open **http://localhost:8080/** in a browser. The page demos the round trip —
+record or upload audio → transcribe → speak the text in a preset or a cloned
+voice. Three things to know:
+
+- **The microphone** needs a secure context (`https://` or `http://localhost`).
+  Over plain `http://<lan-ip>:8080` the browser blocks `getUserMedia`; the page
+  says so and keeps file upload working.
+- **The API key.** When `SPEAKEASY_API_KEY` is set, enter it in the key field at
+  the top of the page — it is kept in `sessionStorage` and sent as a bearer
+  token, never in a URL.
+- **Licensing.** The Reverb-TTS weights are **CC BY-NC 4.0 (non-commercial)**,
+  and a saved clone stores its reference **transcript on disk** in its `.npz`.
+
+Until the background load finishes, the TTS endpoints answer 503 with the reason
+(about 1.1 GB of weights on a cold `/models` volume); `/health/ready` reports
+`"tts": "loading"` until it is ready.
+
 ### Authentication
 
 Off unless `SPEAKEASY_API_KEY` is set. When it is, the `/v1/*` endpoints
@@ -120,6 +140,11 @@ application defaults; the Dockerfiles additionally set
 | `SPEAKEASY_BEAM_SIZE` | `5` | Whisper beam size |
 | `SPEAKEASY_VAD_FILTER` | `true` | Enable Silero VAD filtering |
 | `SPEAKEASY_HF_HOME` | unset (image: `/models`) | Hugging Face cache directory — persist this |
+| `SPEAKEASY_TTS_ENABLED` | `true` | Load Reverb-TTS in a background thread at startup; a no-op unless the `tts` extra is installed |
+| `SPEAKEASY_TTS_MODEL` | `software-mansion/Reverb-TTS` | Hugging Face model id for TTS |
+| `SPEAKEASY_TTS_VARIANT` | `int8` | `fp32` \| `fp16` \| `int8` \| `int4` — download size only, same speed |
+| `SPEAKEASY_TTS_DEVICE` | `auto` | `auto` \| `cuda` \| `cpu` |
+| `SPEAKEASY_VOICES_DIR` | unset | Voices root for saved clones. When set, the value **is** the root (no `/voices` suffix); otherwise `<SPEAKEASY_HF_HOME or ~/.cache/speakeasy>/voices` |
 | `SPEAKEASY_API_KEY` | unset | Bearer token required by the `/v1/*` endpoints (`401` otherwise); unset or empty = no auth. `/health*` stays open |
 
 Example:

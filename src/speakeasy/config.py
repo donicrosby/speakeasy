@@ -3,6 +3,8 @@
 All settings are environment-driven with the SPEAKEASY_ prefix.
 """
 
+import os
+
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -29,6 +31,26 @@ class Settings(BaseSettings):
 
     # HuggingFace cache dir (models persist across restarts)
     hf_home: str | None = None
+
+    # TTS — Reverb voice cloning. A no-op unless the `tts` extra is installed.
+    tts_enabled: bool = True
+    tts_model: str = "software-mansion/Reverb-TTS"
+    tts_variant: str = (
+        "int8"  # fp32 | fp16 | int8 | int4: download size only, same speed
+    )
+    tts_device: str = "auto"  # auto | cuda | cpu
+
+    # Saved voice clones. When set, the value IS the voices root (no /voices
+    # suffix is appended); otherwise <hf_home or ~/.cache/speakeasy>/voices.
+    voices_dir: str | None = None
+
+    def voices_dir_default(self) -> str:
+        if self.voices_dir:
+            return self.voices_dir
+        base = self.hf_home or os.path.join(
+            os.path.expanduser("~"), ".cache", "speakeasy"
+        )
+        return os.path.join(base, "voices")
 
     # Auth — static bearer token, OpenAI-compatible. Empty = no auth (dev).
     api_key: str = ""

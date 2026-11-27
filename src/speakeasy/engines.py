@@ -8,12 +8,15 @@ Two engines behind one interface:
 - MoonshineEngine: transformers — fast path for short English voice notes.
   13x smaller and ~10x faster than Whisper large-v3-turbo, but English-only
   and drops punctuation.
+
+ReverbEngine (speech synthesis) lives here too, behind the optional `tts` extra.
 """
 
 from __future__ import annotations
 
 import os
 import tempfile
+import threading
 import time
 from dataclasses import dataclass, field
 
@@ -140,6 +143,74 @@ class MoonshineEngine:
             engine=self.name,
             elapsed_seconds=round(time.monotonic() - t0, 3),
         )
+
+
+class ReverbEngine:
+    """Reverb-TTS — zero-shot voice cloning, behind the `tts` extra.
+
+    One model on one device: `synthesize` and `clone` share one lock, so
+    concurrent requests queue instead of racing the sampler. The lock is
+    reentrant because the clone-create path holds it and then calls `clone`,
+    which re-acquires the same lock.
+    """
+
+    def __init__(self, model: str, variant: str, device: str):
+        import torch
+        from reverb_tts import LANGUAGES, TTS
+
+        if torch.version.hip is not None:
+            # Spike 004: MIOpen's default find mode costs 1.5-19 s per NEW output
+            # length in the codec decoder. Disable cuDNN/MIOpen on HIP only.
+            torch.backends.cudnn.enabled = False
+        t0 = time.monotonic()
+        self._tts = TTS.from_pretrained(
+            model, variant=variant, device=None if device == "auto" else device
+        )
+        self.load_seconds = time.monotonic() - t0
+        self.sample_rate = self._tts.sample_rate
+        self.languages = sorted(LANGUAGES)
+        # Fetched once here, so no request ever needs the network for a preset.
+        self._presets = {
+            n: self._tts.preset_voice(n) for n in self._tts.preset_voices()
+        }
+        self._lock = threading.RLock()
+
+    @property
+    def name(self) -> str:
+        return "reverb-tts"
+
+    def presets(self) -> list[dict]:
+        """[{id, language, transcript}] — a preset's transcript is its reference text."""
+        return [
+            {"id": n, "language": v.language, "transcript": v.text}
+            for n, v in sorted(self._presets.items())
+        ]
+
+    def voice(self, preset_id: str):
+        try:
+            return self._presets[preset_id]
+        except KeyError:
+            raise ValueError(f"unknown voice {preset_id!r}") from None
+
+    def clone(self, samples: np.ndarray, sample_rate: int, text: str, language: str):
+        """A voice from a reference recording and its exact transcript."""
+        with self._lock:
+            return self._tts.voice(samples, text, language, sample_rate=sample_rate)
+
+    def synthesize(
+        self,
+        text: str,
+        voice,
+        language: str,
+        *,
+        seed: int | None = None,
+        speed: float = 1.0,
+    ) -> tuple[np.ndarray, float]:
+        """float32 samples at `sample_rate`, and the seconds it took."""
+        with self._lock:
+            t0 = time.monotonic()
+            audio = self._tts.generate(text, voice, language, seed=seed, speed=speed)
+        return audio, time.monotonic() - t0
 
 
 def probe_duration(audio_bytes: bytes) -> float | None:

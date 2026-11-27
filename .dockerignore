@@ -6,6 +6,7 @@ build/
 *.egg-info/
 .git/
 .github/
+.worktrees/
 Dockerfile.*
 docker-compose.yml
 README.docker.md
