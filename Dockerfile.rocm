@@ -17,9 +17,9 @@
 # the same amdclang++ toolchain the runtime uses. Built in a separate builder
 # stage so the compilers and CMake never reach the production image.
 #
-# TTS ships in the default build: the tts extra (reverb-tts + torchaudio)
-# rides on top of rocm101. torchaudio is AMD's 2.11.1+rocm10.1.0 build from
-# the same index, pinned in pyproject.toml.
+# TTS ships in the default build: the tts extra (reverb-tts + torchaudio) and
+# the tts-voxcpm extra (VoxCPM2) ride on top of rocm101. torchaudio is AMD's
+# 2.11.1+rocm10.1.0 build from the same index, pinned in pyproject.toml.
 #
 # Build:  docker build -f Dockerfile.rocm -t speakeasy:rocm .
 # Run:    docker run --device=/dev/kfd --device=/dev/dri -p 8080:8080 speakeasy:rocm
@@ -123,18 +123,18 @@ RUN apt-get update \
     && apt-get install -y --no-install-recommends libgomp1 libstdc++6 \
     && rm -rf /var/lib/apt/lists/*
 
-# Locked dependency tree, ROCm 10.1 variant + TTS (torch, the pip ROCm
-# runtime, reverb-tts + torchaudio).
+# Locked dependency tree, ROCm 10.1 variant + both TTS engines (torch, the pip
+# ROCm runtime, reverb-tts + torchaudio, the VoxCPM2 engine).
 # ctranslate2 from the lock is the PyPI CUDA wheel; it is uninstalled and
 # replaced by the source-built HIP wheel in the final step (after the last
 # sync, which would otherwise reassert the locked PyPI wheel over it).
 COPY pyproject.toml uv.lock README.md ./
 RUN --mount=type=cache,target=/root/.cache/uv \
-    uv sync --frozen --no-dev --no-install-project --extra rocm101 --extra tts
+    uv sync --frozen --no-dev --no-install-project --extra rocm101 --extra tts --extra tts-voxcpm
 
 COPY src/ src/
 RUN --mount=type=cache,sharing=locked,target=/root/.cache/uv \
-    uv sync --frozen --no-dev --extra rocm101 --extra tts
+    uv sync --frozen --no-dev --extra rocm101 --extra tts --extra tts-voxcpm
 
 # Install the source-built HIP ctranslate2 wheel, replacing the PyPI CUDA one.
 # ORDER IS LOAD-BEARING: ctranslate2 is in uv.lock, so any `uv sync` after this
@@ -162,10 +162,11 @@ RUN set -eux; \
 
 # Sanity: torch must be the HIP build, ctranslate2 must be the HIP source
 # build (no CUDA classifier symbols), it must import against the runtime, and
-# the TTS stack must be the ROCm build and load against it (no GPU at build
-# time, so the resample runs on CPU). The static UI must ship in the installed
-# wheel, and libsndfile must be able to write MP3 (the default response_format).
-RUN /app/.venv/bin/python -c "import torch, ctranslate2, faster_whisper, speakeasy, torchaudio, reverb_tts, importlib.resources as r, soundfile as sf; assert torch.version.hip is not None, 'torch is not a ROCm/HIP build'; assert '+rocm10.1.0' in torchaudio.__version__, 'torchaudio is not the rocm10.1.0 build'; y = torchaudio.functional.resample(torch.zeros(1, 24000), 24000, 16000); assert y.shape[-1] == 16000, 'torchaudio resample is broken'; assert (r.files('speakeasy') / 'static' / 'index.html').is_file(), 'static UI missing from the wheel'; assert (r.files('speakeasy') / 'static' / 'app.js').is_file(), 'static UI missing from the wheel'; assert (r.files('speakeasy') / 'static' / 'style.css').is_file(), 'static UI missing from the wheel'; assert 'MP3' in sf.available_formats(), 'libsndfile without MP3: default response_format would fail'; print('torch', torch.__version__, 'hip', torch.version.hip, '| ctranslate2', ctranslate2.__version__, '| torchaudio', torchaudio.__version__, '| reverb-tts', reverb_tts.__version__)" \
+# the TTS stack (reverb-tts, torchaudio, the VoxCPM2 engine) must be the ROCm
+# build and load against it (no GPU at build time, so the resample runs on
+# CPU). The static UI must ship in the installed wheel, and libsndfile must be
+# able to write MP3 (the default response_format).
+RUN /app/.venv/bin/python -c "import torch, ctranslate2, faster_whisper, speakeasy, torchaudio, reverb_tts, importlib.metadata as md, importlib.resources as r, soundfile as sf; import voxcpm; from voxcpm import VoxCPM; assert torch.version.hip is not None, 'torch is not a ROCm/HIP build'; assert '+rocm10.1.0' in torchaudio.__version__, 'torchaudio is not the rocm10.1.0 build'; assert md.version('voxcpm').startswith('2.0.'), 'voxcpm is not the 2.0.x release'; y = torchaudio.functional.resample(torch.zeros(1, 24000), 24000, 16000); assert y.shape[-1] == 16000, 'torchaudio resample is broken'; assert (r.files('speakeasy') / 'static' / 'index.html').is_file(), 'static UI missing from the wheel'; assert (r.files('speakeasy') / 'static' / 'app.js').is_file(), 'static UI missing from the wheel'; assert (r.files('speakeasy') / 'static' / 'style.css').is_file(), 'static UI missing from the wheel'; assert 'MP3' in sf.available_formats(), 'libsndfile without MP3: default response_format would fail'; print('torch', torch.__version__, 'hip', torch.version.hip, '| ctranslate2', ctranslate2.__version__, '| torchaudio', torchaudio.__version__, '| reverb-tts', reverb_tts.__version__, '| voxcpm', md.version('voxcpm'))" \
  && /app/.venv/bin/python -c "import glob; data=open(glob.glob('/app/.venv/lib/python3.12/site-packages/ctranslate2.libs/libctranslate2*.so*')[0],'rb').read(); assert b'hipGetDevice' in data or b'libamdhip' in data, 'ctranslate2 is not the HIP build'; print('ctranslate2 HIP linkage OK')"
 
 VOLUME /models
