@@ -42,7 +42,7 @@ Copied from the brief's decisions table (rows 1, 2, 4, 5, 6, 7, 8). These are se
 - **Weights revision.** `tts.py:29` — `REVISION = "v1.0.0"`; the default tag for `software-mansion/Reverb-TTS`.
 - **Preset count.** 16 preset voices (`spikes/004-reverb-tts-rocm/results/result.json:presets`); `preset_voices()` enumerates them (`tts.py:156-164`); `preset_voice(name)` raises `ValueError` on unknown (`tts.py:180-181`).
 - **Voice save/load.** `Voice.save(path)` → `np.savez(path, codes=…int16, text=…, language=…)` (`tts.py:67-73`). `Voice.load(path)` reads `.npz` with `codes` (int64, `[8, frames]`), `text`, `language` (`tts.py:83-87`).
-- **`generate` return type.** `np.ndarray` float32 at the model's sample rate (`tts.py:268` — `return out[0] if single else out`).
+- **`generate` return type.** `np.ndarray` float32 at the model's sample rate (`tts.py:269` — `return out[0] if single else out`).
 - **Sample rate.** `tts.py:116-117` — `self.codec.config.sample_rate`; measured 24000 on gfx1151.
 - **`speed` semantics.** `tts.py:228` — "a factor on the estimated length", not a time-stretch.
 - **Languages.** `text.py:14-22` — `LANGUAGES: Dict[str, str]` lists 7: de, en, es, fr, it, pl, pt. `check_language(language)` raises `ValueError` (`text.py:28-31`).
