@@ -236,7 +236,7 @@ def test_cudnn_disabled_only_on_hip(fake_reverb, monkeypatch):
 
 
 # ---------------------------------------------------------------------------
-# Slice 3 — background TTS load and voice list (§8.4 lifespan/state, §8.5 list)
+# Background TTS load and voice list
 # ---------------------------------------------------------------------------
 
 
@@ -276,7 +276,7 @@ class StubWhisper:
 
 
 class RaisingEngine:
-    """A TTS engine whose listing blows up — exercises the SEC-16 500 leg."""
+    """A TTS engine whose listing blows up — exercises the 500 leg."""
 
     languages = ["en"]
 
@@ -316,7 +316,7 @@ def client(monkeypatch):
     return TestClient(server.app)
 
 
-# --- §8.4 Lifespan and state ------------------------------------------------
+# --- Lifespan and state ------------------------------------------------
 
 
 def test_ready_reports_tts_state(client, monkeypatch):
@@ -433,7 +433,7 @@ def test_start_tts_is_idempotent(client, fake_reverb, monkeypatch):
 
 
 def test_no_exception_text_in_error_bodies(client, fake_reverb, monkeypatch, tmp_path):
-    """SEC-16: no exception text in any response body (all three legs)."""
+    """No exception text in any response body (all three legs)."""
     secret = "reverb-tts failed to load: /models/weights/leaky RuntimeError boom"
 
     # 503 leg — error state.
@@ -453,7 +453,7 @@ def test_no_exception_text_in_error_bodies(client, fake_reverb, monkeypatch, tmp
     for leak in ("/models", "RuntimeError", "boom", "Traceback"):
         assert leak not in r.text
 
-    # 400 leg — an undecodable reference upload (SEC-06).
+    # 400 leg — an undecodable reference upload.
     monkeypatch.setattr(server, "tts", CloneEngine())
     monkeypatch.setattr(server, "voices_store", voices.VoiceStore(tmp_path / "v"))
     r = client.post(
@@ -490,7 +490,7 @@ def test_load_tts_failure_sets_error_state(fake_reverb, monkeypatch, tmp_path):
     assert "no weights for you" in (server.tts_error or "")
 
 
-# --- §8.5 Voice list --------------------------------------------------------
+# --- Voice list --------------------------------------------------------
 
 
 def test_list_voices(client, fake_reverb, monkeypatch, tmp_path):
@@ -562,7 +562,7 @@ def test_list_voices_401(client, monkeypatch):
 
 
 # ---------------------------------------------------------------------------
-# Slice 4 — POST /v1/audio/speech (§4.2 speech contract, §8.6 scenarios)
+# POST /v1/audio/speech
 # ---------------------------------------------------------------------------
 
 SPEECH_SAMPLES = 12000  # 0.5 s at 24 kHz — what the stub engine returns
@@ -779,8 +779,7 @@ def test_speech_handler_is_a_plain_def():
 
 
 # ---------------------------------------------------------------------------
-# Slice 5 — POST /v1/audio/voices and DELETE /v1/audio/voices/{id}
-# (§4.3, §4.4, §8.7; SEC-02..07, and the decode leg of SEC-16)
+# POST /v1/audio/voices and DELETE /v1/audio/voices/{id}
 # ---------------------------------------------------------------------------
 
 
@@ -863,7 +862,7 @@ def _clone_request(
 
 
 def test_clone_creates_voice(client, clone_engine, clone_store):
-    """§8.7 — 201, the `.npz` on disk, and the voice in the listing."""
+    """A 201, the `.npz` on disk, and the voice in the listing."""
     r = _clone_request(
         client,
         _wav_bytes(3, 16000),
@@ -896,7 +895,7 @@ def test_clone_creates_voice(client, clone_engine, clone_store):
 
 
 def test_clone_autogenerates_id(client, clone_engine, clone_store):
-    """§4.3 — an omitted voice_id becomes a `clone-<hex8>` matching the regex."""
+    """An omitted voice_id becomes a `clone-<hex8>` matching the regex."""
     r = _clone_request(client, _wav_bytes(3, 16000))
     assert r.status_code == 201
     new_id = r.json()["id"]
@@ -906,7 +905,7 @@ def test_clone_autogenerates_id(client, clone_engine, clone_store):
 
 
 def test_clone_validation_errors(client, clone_engine):
-    """§8.7 — blank text, unsupported language, invalid voice_id → 400."""
+    """Blank text, unsupported language, invalid voice_id → 400."""
     wav = _wav_bytes(3, 16000)
 
     r = _clone_request(client, wav, text="   ")
@@ -930,7 +929,7 @@ def test_clone_validation_errors(client, clone_engine):
 
 
 def test_clone_collision_409(client, clone_engine, clone_store):
-    """§8.7 / SEC-02, SEC-03 — a preset id or an existing clone → 409."""
+    """A preset id or an existing clone → 409."""
     wav = _wav_bytes(3, 16000)
 
     # A preset id: underscores are not valid store ids, so the preset check runs
@@ -946,7 +945,7 @@ def test_clone_collision_409(client, clone_engine, clone_store):
 
 
 def test_clone_duration_bounds(client, clone_engine):
-    """§8.7 / SEC-05 — under 1 s and over 30 s → 400 with the exact duration."""
+    """Under 1 s and over 30 s → 400 with the exact duration."""
     r = _clone_request(client, _wav_bytes(0.5, 16000))
     assert r.status_code == 400
     assert r.json() == {
@@ -963,7 +962,7 @@ def test_clone_duration_bounds(client, clone_engine):
 
 
 def test_clone_undecodable_400(client, clone_engine):
-    """§8.7 / SEC-06 — undecodable bytes → 400, no exception text."""
+    """Undecodable bytes → 400, no exception text."""
     r = _clone_request(client, b"this is not audio at all")
     assert r.status_code == 400
     assert r.json() == {"error": {"message": "could not decode the reference audio"}}
@@ -972,7 +971,7 @@ def test_clone_undecodable_400(client, clone_engine):
 
 
 def test_clone_too_large_413(client, clone_engine, monkeypatch):
-    """§8.7 / SEC-04 — over 20 MB → 413 before any decode."""
+    """Over 20 MB → 413 before any decode."""
     decoded = []
     monkeypatch.setattr(server, "_decode_reference", lambda data: decoded.append(data))
 
@@ -991,7 +990,7 @@ def test_clone_401(client, clone_engine, monkeypatch):
 
 
 def test_clone_missing_fields_422(client, clone_engine):
-    """§8.7 — no file or no text → 422 (FastAPI/Pydantic)."""
+    """No file or no text → 422 (FastAPI/Pydantic)."""
     r = client.post("/v1/audio/voices", data={"text": "hi", "language": "en"})
     assert r.status_code == 422
 
@@ -1017,7 +1016,7 @@ def test_clone_503(client, monkeypatch):
 
 
 def test_concurrent_clone_create_one_wins(client, clone_engine, clone_store):
-    """§8.7 / SEC-07 — two same-id creates: one 201, one 409, clean `.npz`."""
+    """Two same-id creates: one 201, one 409, clean `.npz`."""
     clone_engine.clone_delay = 0.2
     wav = _wav_bytes(3, 16000)
     barrier = threading.Barrier(2)
@@ -1043,7 +1042,7 @@ def test_concurrent_clone_create_one_wins(client, clone_engine, clone_store):
 
 
 def test_engine_lock_serialises_calls(client, fake_reverb, monkeypatch, tmp_path):
-    """§8.7 / SEC-07 — two concurrent speech calls never overlap in the engine."""
+    """Two concurrent speech calls never overlap in the engine."""
     engine = engines.ReverbEngine("m", "int8", "cpu")
     monkeypatch.setattr(server, "tts", engine)
     monkeypatch.setattr(server, "voices_store", voices.VoiceStore(tmp_path / "v"))
@@ -1079,7 +1078,7 @@ def test_delete_clone(client, clone_engine, clone_store):
 
 
 def test_delete_404(client, clone_engine, clone_store):
-    """§8.7 — unknown id, preset, or invalid id → 404; a preset is never deleted."""
+    """Unknown id, preset, or invalid id → 404; a preset is never deleted."""
     r = client.delete("/v1/audio/voices/never-saved")
     assert r.status_code == 404
     assert r.json() == {"error": {"message": "no saved voice 'never-saved'"}}

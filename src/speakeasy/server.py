@@ -77,7 +77,7 @@ startup_error: str | None = None
 
 # TTS (Reverb) — loaded on a background thread after Whisper so readiness never
 # waits on it. `disabled | loading | ready | error`; `tts_error` is logged only,
-# never returned (SEC-16).
+# never returned.
 tts: ReverbEngine | None = None
 voices_store: VoiceStore | None = None
 tts_state = "disabled"
@@ -182,8 +182,8 @@ def tts_unavailable() -> JSONResponse | None:
 app = FastAPI(title="speakeasy", version="0.1.0", lifespan=lifespan)
 
 # Static UI at `/` — three files served as-is, no build step, no third-party
-# script (spec §7). The CSP has no `unsafe-inline`, so the page carries no
-# inline <script>/<style> and no inline event handlers (SEC-09/SEC-10).
+# script. The CSP has no `unsafe-inline`, so the page carries no
+# inline <script>/<style> and no inline event handlers.
 STATIC = Path(__file__).parent / "static"
 CSP = (
     "default-src 'self'; media-src 'self' blob:; connect-src 'self'; "
@@ -419,7 +419,7 @@ def create_voice(
             status_code=413,
             content={"error": {"message": "reference audio over 20 MB"}},
         )
-    # Decode and validate duration OUTSIDE the engine lock (SEC-07): a slow or
+    # Decode and validate duration OUTSIDE the engine lock: a slow or
     # oversized upload must never stall speech inference.
     try:
         samples = _decode_reference(data)

@@ -107,7 +107,7 @@ def test_delete_unknown_returns_false(store):
 
 
 def test_voices_dir_created_private(store):
-    """§5: the voices directory is created with mode 0o700 (no group/other bits)."""
+    """The voices directory is created with mode 0o700 (no group/other bits)."""
     assert store.root.is_dir()
     assert store.root.stat().st_mode & 0o077 == 0
 
@@ -115,8 +115,7 @@ def test_voices_dir_created_private(store):
 def test_corrupt_npz_skipped_in_listing(store):
     """A garbage `.npz` in the voices dir is skipped, never raised on.
 
-    §8.3 files the scenario at the endpoint, but the endpoint lands in slice 3.
-    Here we test the store half it depends on: `ids()`/`info()` never surface a
+    We test the store half the endpoint depends on: `ids()`/`info()` never surface a
     file that cannot be read, so `GET /v1/audio/voices` cannot 500 on one.
     """
     store.save("good-1", Voice(text="fine"))
@@ -124,7 +123,7 @@ def test_corrupt_npz_skipped_in_listing(store):
 
     assert store.ids() == ["good-1"]
 
-    # Building the listing shape slice 3 will return must not raise.
+    # Building the listing shape must not raise.
     listed = [{"id": i, **store.info(i)} for i in store.ids()]
     # `created` is the clone file's mtime, not whatever `listed` happened to
     # hold — comparing it to itself proved nothing.

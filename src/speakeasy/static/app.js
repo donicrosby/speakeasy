@@ -11,7 +11,7 @@ const $ = (id) => document.getElementById(id);
 const KEY_STORAGE = "speakeasy_key";
 const key = () => sessionStorage.getItem(KEY_STORAGE) || "";
 
-// Fixed messages (spec §7.5). Kept literal so every state is greppable.
+// Fixed messages. Kept literal so every state is greppable.
 const MSG = {
   unauthorized: "Wrong or missing API key — enter it above.",
   loading:

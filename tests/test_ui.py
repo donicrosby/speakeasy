@@ -1,9 +1,9 @@
 """Static UI shell — the page, its assets, its headers, and the source-level
-guarantees the CSP depends on (SEC-09..SEC-13, SEC-15).
+guarantees the CSP depends on.
 
 The page is not executed here: the repo ships no JS harness and the workers
 have no browser. These tests read the shipped source as text and pin the
-contract the orchestrator re-checks in a browser at landing (spec §7, §8.8).
+contract the orchestrator re-checks in a browser at landing.
 """
 
 import re
@@ -16,7 +16,7 @@ import speakeasy.server as server
 
 STATIC = Path(server.__file__).parent / "static"
 
-# SEC-09 — the exact string `GET /` must return.
+# The exact string `GET /` must return.
 CSP = (
     "default-src 'self'; media-src 'self' blob:; connect-src 'self'; "
     "img-src 'self' data:; base-uri 'none'; frame-ancestors 'none'"
@@ -38,7 +38,7 @@ def client(monkeypatch):
     return TestClient(server.app)
 
 
-# --- §8.8 UI -----------------------------------------------------------------
+# --- UI -----------------------------------------------------------------
 
 
 def test_index_page(client):
@@ -47,7 +47,7 @@ def test_index_page(client):
     assert r.headers["content-type"].startswith("text/html")
     assert "speakeasy" in r.text
     assert r.headers["content-security-policy"] == CSP
-    # SEC-09 plus the two companion headers (brief Task 8).
+    # The CSP plus the two companion headers.
     assert r.headers["x-content-type-options"] == "nosniff"
     assert r.headers["referrer-policy"] == "no-referrer"
 
@@ -68,7 +68,7 @@ def test_static_traversal_blocked(client):
 
 
 def test_root_and_static_require_no_auth(monkeypatch):
-    # SEC-15: `/` and `/static/*` stay open even when a key is configured.
+    # `/` and `/static/*` stay open even when a key is configured.
     monkeypatch.setattr(server.settings, "api_key", "unit-test-key")
     c = TestClient(server.app)
     assert c.get("/").status_code == 200
@@ -76,7 +76,7 @@ def test_root_and_static_require_no_auth(monkeypatch):
     assert c.get("/static/style.css").status_code == 200
 
 
-# --- source-level guarantees (SEC-10, SEC-11, SEC-12) ------------------------
+# --- source-level guarantees ------------------------
 
 INLINE_HANDLER = re.compile(
     r"\son(?:click|dblclick|change|input|submit|reset|load|error|focus|blur|"
@@ -110,7 +110,7 @@ def test_static_source_is_csp_safe():
 def test_page_implements_three_panels_and_states():
     html = _read("index.html")
     js = _read("app.js")
-    # Three panels, each with its own error line (§7.5).
+    # Three panels, each with its own error line.
     for panel in ("listen", "speak", "clone"):
         assert f'id="panel-{panel}"' in html
         assert f'id="{panel}-error"' in html
@@ -118,7 +118,7 @@ def test_page_implements_three_panels_and_states():
     # The mic-unavailable path says why, and upload still works.
     assert "mic needs HTTPS or localhost" in js
     assert 'type="file"' in html
-    # Every §7.5 state message is present, plus the in-flight label.
+    # Every state message is present, plus the in-flight label.
     for message in (
         "Wrong or missing API key",
         "TTS is still loading",
@@ -132,7 +132,7 @@ def test_page_implements_three_panels_and_states():
 
 def test_mic_capture_is_16k_mono_wav():
     js = _read("app.js")
-    # Mono WAV at 16 kHz (§7.2), with the canonical 16-bit PCM header fields.
+    # Mono WAV at 16 kHz, with the canonical 16-bit PCM header fields.
     assert "16000" in js
     assert "OfflineAudioContext" in js
     for field in ("RIFF", "WAVE", "fmt ", "data"):
@@ -165,7 +165,7 @@ def test_503_is_endpoint_aware():
 
     The transcription endpoint 503s from Whisper (failed to load, or still
     loading), so only the TTS endpoints may map a 503 through the TTS reason
-    table (§7.5). The page is not executed here, so this pins the shipped
+    table. The page is not executed here, so this pins the shipped
     source the way the rest of this file does.
     """
     js = _read("app.js")

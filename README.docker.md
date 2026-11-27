@@ -102,9 +102,9 @@ voice. Three things to know:
 - **Licensing.** The Reverb-TTS weights are **CC BY-NC 4.0 (non-commercial)**,
   and a saved clone stores its reference **transcript on disk** in its `.npz`.
 
-The first TTS request waits for the background load (about 1.1 GB of weights on
-a cold `/models` volume); `/health/ready` reports `"tts": "loading"` until it is
-ready.
+Until the background load finishes, the TTS endpoints answer 503 with the reason
+(about 1.1 GB of weights on a cold `/models` volume); `/health/ready` reports
+`"tts": "loading"` until it is ready.
 
 ### Authentication
 
