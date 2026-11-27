@@ -151,17 +151,20 @@ async function decodeToWav(blob) {
   const bytes = await blob.arrayBuffer();
   const AudioCtx = window.AudioContext || window.webkitAudioContext;
   const ctx = new AudioCtx();
-  const source = await ctx.decodeAudioData(bytes.slice(0));
-  const frames = Math.ceil(source.duration * 16000) || 1;
-  const offline = new OfflineAudioContext(1, frames, 16000);
-  const node = offline.createBufferSource();
-  node.buffer = source;
-  node.connect(offline.destination);
-  node.start();
-  const rendered = await offline.startRendering();
-  const mono = rendered.getChannelData(0);
-  ctx.close();
-  return { blob: encodeWav(mono, 16000), duration: mono.length / 16000 };
+  try {
+    const source = await ctx.decodeAudioData(bytes.slice(0));
+    const frames = Math.ceil(source.duration * 16000) || 1;
+    const offline = new OfflineAudioContext(1, frames, 16000);
+    const node = offline.createBufferSource();
+    node.buffer = source;
+    node.connect(offline.destination);
+    node.start();
+    const rendered = await offline.startRendering();
+    const mono = rendered.getChannelData(0);
+    return { blob: encodeWav(mono, 16000), duration: mono.length / 16000 };
+  } finally {
+    ctx.close(); // also on a decode/render failure, or the context leaks
+  }
 }
 
 function encodeWav(samples, rate) {
