@@ -77,7 +77,43 @@ SELECTIONS = [
         ("nvidia-",),
         id="rocm101+tts",
     ),
+    pytest.param(
+        ["--extra", "cpu", "--extra", "tts", "--extra", "tts-voxcpm"],
+        ["voxcpm==", "reverb-tts==", "torchaudio==\\S*\\+cpu"],
+        GPU_PREFIXES,
+        id="cpu+tts+tts-voxcpm",
+    ),
+    pytest.param(
+        ["--extra", "cu130", "--extra", "tts", "--extra", "tts-voxcpm"],
+        ["voxcpm==", "reverb-tts==", "torch==\\S*\\+cu\\d+"],
+        ("rocm", "amd-torch-device"),
+        id="cu130+tts+tts-voxcpm",
+    ),
+    pytest.param(
+        ["--extra", "rocm101", "--extra", "tts", "--extra", "tts-voxcpm"],
+        ["voxcpm==", "reverb-tts==", "rocm-sdk-core==", "torchaudio==\\S*\\+rocm"],
+        ("nvidia-",),
+        id="rocm101+tts+tts-voxcpm",
+    ),
 ]
+
+# voxcpm's metadata pulls these in; none of them may reach any install. The
+# lock's override-dependencies list staples this marker to each of them.
+NEVER = "sys_platform == 'never'"
+SUPPLY_CHAIN_LEAKS = (
+    "torchcodec",
+    "gradio",
+    "gradio-client",
+    "hf-gradio",
+    "funasr",
+    "spaces",
+    "datasets",
+    "argbind",
+    "modelscope",
+    "modelscope-hub",
+)
+
+ACCELERATORS = ("cpu", "cu130", "rocm", "rocm101")
 
 
 def export(*extra: str) -> list[str]:
@@ -115,6 +151,16 @@ def name_of(req: str) -> str:
     return re.split(r"[\s=;<>\[!~(]", req, maxsplit=1)[0]
 
 
+# A requirement line (`name==version`, optionally marker-terminated). `uv
+# export` also emits `# via ...` annotation comments; those belong to uv, not
+# to the resolution, and they move when an extra adds a second route.
+REQUIREMENT = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]*==")
+
+
+def pins(reqs: list[str]) -> set[str]:
+    return {req for req in reqs if REQUIREMENT.match(req)}
+
+
 def test_no_extras_resolves_to_the_cpu_build():
     reqs = export()
     leaked = sorted({name_of(r) for r in reqs if name_of(r).startswith(GPU_PREFIXES)})
@@ -136,3 +182,33 @@ def test_extra_resolves_to_its_own_stack(extra, must_match, forbidden):
         )
     foreign = sorted({name_of(r) for r in reqs if name_of(r).startswith(forbidden)})
     assert not foreign, f"{extra}: packages from another stack: {foreign}"
+
+
+@pytest.mark.parametrize("accelerator", ACCELERATORS)
+def test_voxcpm2_extra_excludes_supply_chain_leaks(accelerator):
+    """Adding the voxcpm extra adds packages, and re-pins nothing.
+
+    voxcpm's metadata pulls ten packages its runtime path never imports. The
+    lock's override-dependencies staple `sys_platform == 'never'` to each, so
+    no real install can reach one; the export still lists every locked package,
+    with that marker as the guard. The overrides also stop the fsspec
+    downgrade one of them drags in. An existing pin that changes version on
+    the way is equally a failure.
+    """
+    before = export("--extra", accelerator, "--extra", "tts")
+    after = export("--extra", accelerator, "--extra", "tts", "--extra", "tts-voxcpm")
+
+    named = {name_of(r): r for r in after if name_of(r) in SUPPLY_CHAIN_LEAKS}
+    leaked = sorted(name for name, req in named.items() if NEVER not in req)
+    assert not leaked, f"{accelerator}: voxcpm installs excluded packages: {leaked}"
+
+    changed = sorted(pins(before) - pins(after))
+    assert not changed, (
+        f"{accelerator}: adding the voxcpm extra changed pins: {changed}"
+    )
+
+    assert any(r.startswith("voxcpm==") for r in after), (
+        f"{accelerator}: the voxcpm extra adds no voxcpm"
+    )
+    fsspec = {r for r in after if name_of(r) == "fsspec"}
+    assert fsspec == {"fsspec==2026.9.0"}, f"{accelerator}: fsspec moved: {fsspec}"
