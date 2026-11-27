@@ -1049,6 +1049,26 @@ def _clone_request(
     return client.post("/v1/audio/voices", files=files, data=form)
 
 
+def test_clone_create_with_a_disabled_engine_is_an_unlisted_404(
+    client, monkeypatch, clone_store
+):
+    """A clone for a disabled engine's id answers the listing 404, no file."""
+    monkeypatch.setattr(server.settings, "tts_enabled", False)
+    monkeypatch.setattr(server, "tts", None)
+    monkeypatch.setattr(server, "voices_store", clone_store)
+    monkeypatch.setattr(server, "tts_state", "disabled")
+
+    ids = [m["id"] for m in client.get("/v1/models").json()["data"]]
+    assert "reverb-tts" not in ids
+
+    r = _clone_request(client, _wav_bytes(3, 16000), voice_id="clone-deadbeef")
+    assert r.status_code == 404
+    assert r.json() == {
+        "error": {"message": "unknown model 'reverb-tts'. Known: voxcpm2"}
+    }
+    assert not list(clone_store.root.glob("*.npz"))
+
+
 def test_clone_creates_voice(client, clone_engine, clone_store):
     """A 201, the `.npz` on disk, and the voice in the listing."""
     r = _clone_request(
