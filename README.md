@@ -136,6 +136,13 @@ curl -s -X DELETE -H "Authorization: Bearer $SPEAKEASY_API_KEY" \
 > a separate license. A saved clone stores its reference **transcript on disk**
 > in the `.npz` file alongside the codec codes; treat the voices directory as
 > sensitive.
+>
+> **Corrupt saved clones.** A clone whose `.npz` no longer reads (a manual edit,
+> or filesystem corruption) is skipped by `GET /v1/audio/voices`, but
+> `POST /v1/audio/speech` that names it fails with a `500` — the speech path
+> loads the file directly rather than listing it, so the guard that skips a
+> bad file in the listing does not apply. Delete the `.npz` and re-clone to
+> recover.
 
 ### Other endpoints
 
