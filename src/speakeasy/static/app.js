@@ -280,6 +280,10 @@ function wireListen() {
 
 // --- Speak -------------------------------------------------------------------
 
+// The last Speak blob URL, revoked before the next one so the page does not
+// leak decoded audio for the lifetime of the tab.
+let speakUrl = null;
+
 function fillLanguages(languages) {
   for (const id of ["speak-language", "clone-language"]) {
     const select = $(id);
@@ -342,9 +346,11 @@ async function speak() {
     const elapsed = response.headers.get("X-Speakeasy-Elapsed") || "?";
     const rtf = response.headers.get("X-Speakeasy-RTF") || "?";
     const blob = await response.blob();
-    const url = URL.createObjectURL(blob);
-    $("speak-audio").src = url;
-    $("speak-download").href = url;
+    const previous = speakUrl;
+    speakUrl = URL.createObjectURL(blob);
+    $("speak-audio").src = speakUrl;
+    $("speak-download").href = speakUrl;
+    if (previous) URL.revokeObjectURL(previous);
     $("speak-meta").textContent =
       duration + " s · " + elapsed + " s · " + rtf + "x real time";
   } finally {
