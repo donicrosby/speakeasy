@@ -44,6 +44,7 @@ from pydantic import BaseModel, Field
 
 from .config import Settings, resolve_device_compute
 from .engines import (
+    BadTake,
     MoonshineEngine,
     ReverbEngine,
     VoxCPM2Engine,
@@ -230,6 +231,19 @@ def voxcpm2_unavailable() -> JSONResponse | None:
     if voxcpm2_state in VOXCPM2_503_REASONS:
         return voxcpm2_503(voxcpm2_state)
     return None
+
+
+VOXCPM2_BAD_TAKE_REASON = (
+    "voxcpm2 could not generate a good take for this input; "
+    "check the input length and try again"
+)
+
+
+def voxcpm2_bad_take() -> JSONResponse:
+    """503 with the fixed bad-take reason — only a good take is ever encoded."""
+    return JSONResponse(
+        status_code=503, content={"error": {"message": VOXCPM2_BAD_TAKE_REASON}}
+    )
 
 
 def start_voxcpm2() -> None:
@@ -441,7 +455,7 @@ SPEECH_FORMATS = {  # response_format -> (libsndfile format, subtype, content ty
     "wav": ("WAV", "PCM_16", "audio/wav"),
     "mp3": ("MP3", "MPEG_LAYER_III", "audio/mpeg"),
     "flac": ("FLAC", "PCM_16", "audio/flac"),
-    "pcm": (None, None, "audio/pcm"),  # raw 24 kHz s16le mono, as OpenAI defines it
+    "pcm": (None, None, "audio/pcm"),  # raw s16le mono at the engine's rate
 }
 
 
@@ -450,9 +464,14 @@ class SpeechRequest(BaseModel):
     voice: str = "en_male_narrator_1"
     response_format: Literal["wav", "mp3", "flac", "pcm"] = "mp3"
     speed: float = Field(default=1.0, ge=0.25, le=4.0)  # a length factor; see README
-    model: str = ""  # accepted for OpenAI clients; the server has one TTS model
+    model: str = ""  # "voxcpm2" selects the second engine; every other value is Reverb
     language: str | None = None  # default: the voice's language
     seed: int | None = None
+    # VoxCPM2-only controls; a set value on a Reverb request is a 400. `cfg`
+    # left null means the engine's own default (2.0).
+    cfg: float | None = Field(default=None, ge=1.0, le=5.0)
+    design: str | None = Field(default=None, min_length=1, max_length=300)
+    style: str | None = Field(default=None, min_length=1, max_length=200)
 
 
 def _bad_request(message: str) -> JSONResponse:
@@ -478,13 +497,14 @@ def _resolve_voice(voice_id: str):
         raise ValueError(f"unknown voice {voice_id!r}. Known: {known}") from None
 
 
-def _encode(audio: np.ndarray, fmt: str) -> tuple[bytes, str]:
+def _encode(audio: np.ndarray, fmt: str, sample_rate: int) -> tuple[bytes, str]:
+    """Encode `audio` at the sample rate of the engine that produced it."""
     snd, subtype, media = SPEECH_FORMATS[fmt]
     if snd is None:
         return (np.clip(audio, -1, 1) * 32767).astype("<i2").tobytes(), media
     buf = io.BytesIO()
     with sf.SoundFile(
-        buf, "w", samplerate=tts.sample_rate, channels=1, format=snd, subtype=subtype
+        buf, "w", samplerate=sample_rate, channels=1, format=snd, subtype=subtype
     ) as f:
         f.write(audio)
     return buf.getvalue(), media
@@ -494,8 +514,21 @@ def _encode(audio: np.ndarray, fmt: str) -> tuple[bytes, str]:
 def speech(req: SpeechRequest):
     # A plain `def`, not `async def`: FastAPI runs it on the threadpool, so the
     # engine lock blocks a worker thread and never the event loop.
+    if req.model == "voxcpm2":
+        return _speech_voxcpm2(req)
+    return _speech_reverb(req)
+
+
+def _speech_reverb(req: SpeechRequest):
+    """Reverb's speech path — unchanged for a request with no new fields."""
     if resp := tts_unavailable():
         return resp
+    # `cfg`, `design` and `style` are VoxCPM2-only: a set value asks for the
+    # other engine.
+    if req.cfg is not None or req.design is not None or req.style is not None:
+        return _bad_request(
+            "cfg, design and style are voxcpm2-only fields; set model=voxcpm2"
+        )
     text = req.input.strip()
     if not text:
         return _bad_request("input must not be empty")
@@ -508,23 +541,133 @@ def speech(req: SpeechRequest):
         return _bad_request(
             f"unsupported language {language!r}. Supported: {', '.join(tts.languages)}"
         )
-    audio, elapsed = tts.synthesize(
-        text, voice, language, seed=req.seed, speed=req.speed
+    # The shared lock serialises both engines' inference; Reverb keeps its own
+    # engine lock too.
+    with tts_lock:
+        audio, elapsed = tts.synthesize(
+            text, voice, language, seed=req.seed, speed=req.speed
+        )
+    return _speech_response(
+        audio, elapsed, req.response_format, tts.name, tts.sample_rate
     )
-    body, media_type = _encode(audio, req.response_format)
-    duration = len(audio) / tts.sample_rate
+
+
+def _voxcpm2_unknown_voice(voice_id: str) -> str:
+    """The fixed 400 message for a voxcpm2 voice that is not `default` or a clone."""
+    saved = ", ".join(voxcpm2_store.ids()) if voxcpm2_store is not None else ""
+    return (
+        f"unknown voice {voice_id!r} for voxcpm2; "
+        f"use 'default' or a saved clone: {saved}"
+    )
+
+
+def _speech_voxcpm2(req: SpeechRequest):
+    """VoxCPM2's speech path: lifecycle gate, validation, one locked inference."""
+    global voxcpm2_last_used
+
+    # 1. Single-flight lifecycle gate: a request in `not_loaded` starts exactly
+    #    one load and answers 503; `loading` answers 503 and starts nothing.
+    if resp := _ensure_voxcpm2_loading():
+        return resp
+    # 2. Gate check without the lock; a pass is not a promise.
+    if resp := voxcpm2_unavailable():
+        return resp
+    # 3. Validation (needs no lock).
+    text = req.input.strip()
+    if not text:
+        return _bad_request("input must not be empty")
+    if text.startswith("("):
+        return _bad_request(
+            "input starting with '(' is reserved for design and style; "
+            "remove the leading parenthesis or use the design field"
+        )
+    if req.speed != 1.0:
+        return _bad_request("speed must be 1.0 for the voxcpm2 engine")
+    if req.design is not None and req.style is not None:
+        return _bad_request("at most one of design and style may be set")
+    # An omitted `voice` is the model's own voice; an explicit id must be a clone.
+    voice_id = "default" if "voice" not in req.model_fields_set else req.voice
+    if req.design is not None and voice_id != "default":
+        return _bad_request("design requires voice: 'default'")
+    for value in (req.design, req.style):
+        if value is not None and (
+            "(" in value or ")" in value or "\n" in value or "\r" in value
+        ):
+            return _bad_request(
+                "design and style must not contain parentheses or newlines"
+            )
+    reference = None
+    prompt_text = None
+    if voice_id != "default":
+        store = voxcpm2_store
+        if store is None or not store.exists(voice_id):
+            return _bad_request(_voxcpm2_unknown_voice(voice_id))
+        try:
+            info = store.info(voice_id)
+        except ValueError:
+            return _bad_request(_voxcpm2_unknown_voice(voice_id))
+        reference = str(store.reference_path(voice_id))
+        prompt_text = info.get("transcript")
+    # The library reads a leading parenthesized prefix as design/style syntax;
+    # the server builds it itself and hands the engine one text.
+    prefix = req.design if req.design is not None else req.style
+    library_text = f"({prefix}){text}" if prefix is not None else text
+    cfg = req.cfg if req.cfg is not None else 2.0
+
+    # 4-9. One inference at a time: acquire the shared lock, re-check the engine
+    # under it, seed and generate, then bump last-used — all under the lock.
+    with tts_lock:
+        if voxcpm2_state == "error":
+            return voxcpm2_503("error")
+        if voxcpm2_state == "disabled":
+            return voxcpm2_503("disabled")
+        if voxcpm2_state != "ready" or voxcpm2 is None:
+            # The engine was unloaded between the gate and the lock: restart the
+            # load and answer 503, never 500.
+            if resp := _ensure_voxcpm2_loading():
+                return resp
+            return voxcpm2_503("not_loaded")
+        engine = voxcpm2
+        try:
+            audio, elapsed = engine.synthesize(
+                library_text,
+                reference=reference,
+                prompt_text=prompt_text,
+                cfg=cfg,
+                seed=req.seed,
+            )
+        except BadTake:
+            return voxcpm2_bad_take()
+        except FileNotFoundError:
+            # The clone vanished between resolution and the library call.
+            return _bad_request(_voxcpm2_unknown_voice(voice_id))
+        except Exception:  # noqa: BLE001 — never leak engine internals
+            log.exception("voxcpm2 synthesis failed")
+            return JSONResponse(
+                status_code=500,
+                content={"error": {"message": "voxcpm2 failed to generate speech"}},
+            )
+        voxcpm2_last_used = time.monotonic()
+        sample_rate = engine.sample_rate
+    return _speech_response(
+        audio, elapsed, req.response_format, engine.name, sample_rate
+    )
+
+
+def _speech_response(
+    audio: np.ndarray, elapsed: float, fmt: str, engine_name: str, sample_rate: int
+) -> Response:
+    """Encode `audio` and build the four response headers, naming the engine."""
+    body, media_type = _encode(audio, fmt, sample_rate)
+    duration = len(audio) / sample_rate
     log.info(
-        "speech voice=%s language=%s audio=%.2fs elapsed=%.3fs",
-        req.voice,
-        language,
-        duration,
-        elapsed,
+        "speech engine=%s audio=%.2fs elapsed=%.3fs", engine_name, duration, elapsed
     )
     return Response(
         content=body,
         media_type=media_type,
         headers={
-            "X-Speakeasy-Engine": tts.name,
+            "X-Speakeasy-Engine": engine_name,
             "X-Speakeasy-Elapsed": str(round(elapsed, 3)),
             "X-Speakeasy-Audio-Duration": str(round(duration, 3)),
             "X-Speakeasy-RTF": str(round(elapsed / max(duration, 0.01), 3)),
