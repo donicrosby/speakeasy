@@ -596,6 +596,24 @@ def test_list_voices_skips_a_clone_deleted_mid_listing(monkeypatch, tmp_path):
     assert VanishedCloneStore.reads == 1
 
 
+def test_list_voices_clones_sorted_by_id_with_prefix_pair(
+    client, clone_engine, clone_store
+):
+    """Clones keep id order when one id is a prefix-hyphen of another.
+
+    `clone-a` / `clone-a-b` sort the same as ids but the reverse of their file
+    paths, so the response order pins that the listing is ordered by id.
+    """
+    for voice_id in ("clone-a-b", "clone-z", "clone-a"):
+        clone_store.save(voice_id, ServerVoice())
+
+    r = client.get("/v1/audio/voices")
+
+    assert r.status_code == 200
+    clones = [d["id"] for d in r.json()["data"] if d["type"] == "clone"]
+    assert clones == ["clone-a", "clone-a-b", "clone-z"]
+
+
 # ---------------------------------------------------------------------------
 # POST /v1/audio/speech
 # ---------------------------------------------------------------------------

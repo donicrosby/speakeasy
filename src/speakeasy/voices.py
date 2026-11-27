@@ -65,7 +65,7 @@ class VoiceStore:
         file is skipped, never raised on, so a listing cannot 500 on the race.
         """
         entries: list[tuple[str, dict]] = []
-        for path in sorted(self.root.glob("*.npz")):
+        for path in sorted(self.root.glob("*.npz"), key=lambda p: p.stem):
             if not VOICE_ID.fullmatch(path.stem):
                 continue
             info = self._read(path)
