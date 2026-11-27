@@ -81,7 +81,7 @@ Every fact is cited at an exact version and every citation was re-read before ma
 - **S11 — ReverbEngine.** `src/speakeasy/engines.py:148-213` — `from_pretrained`, disables `cudnn` on HIP, holds one `RLock` over `synthesize` and `clone`.
 - **S12 — Test faking pattern.** `tests/test_tts.py:112-116` — `sys.modules` fake; `tests/test_tts.py:121-123` — asserts `reverb_tts` not in `sys.modules` at import time. Baseline: 127 passed, 7 pre-commit hooks.
 - **S13 — CI.** `.github/workflows/test.yml:22` — `uv sync --all-groups` (no extras). Both Dockerfiles sync `--extra <accel> --extra tts` and sanity-step import.
-- **S14 — Config prefix and lock.** `src/speakeasy/config.py:10` — `SPEAKEASY_` prefix. `tests/test_lock_default.py` — no-extras resolves to CPU torch.
+- **S14 — Config prefix and lock.** `src/speakeasy/config.py:12` — `SPEAKEASY_` prefix. `tests/test_lock_default.py` — no-extras resolves to CPU torch.
 - **S15 — No request timeout.** `server.py:577` — uvicorn has no timeout set on the run; `app.js:85` — `fetch` has no abort controller.
 - **S16 — UI structure.** `src/speakeasy/static/index.html` — three panels (listen, speak, clone); `app.js` — `speak()` at line 351, `fillVoices()` at 327, `renderClones()` at 394, `saveClone()` at 419, `refreshStatus()` at 477; `textContent` for all data; `sessionStorage` for key.
 
@@ -104,13 +104,13 @@ Every fact is cited at an exact version and every citation was re-read before ma
 ### VERIFIED — spike 005 results (`ref/voxcpm2/results/`)
 
 - **V14 — Speed.** `timing.json` — RTF 1.03 to 1.07 at 10 steps (CFG 2.0), flat across length and mode. 5 steps: 0.91; 16 steps: 1.24. About 17 characters of text per second of audio.
-- **V15 — `cfg` sweep.** `cfg_sweep.json` — RTF ~1.09 at every value. At 0.5 the text is ignored (12/12 words wrong). Loudness: -25.7 dBFS at 1.0, -17.4 at 2.0, -9.0 at 5.0. Takes vary ±4 dB on seed alone.
+- **V15 — `cfg` sweep.** `cfg_sweep.json` — RTF ~1.09 at every accepted value (1.0 to 5.0; 1.22 at 0.5, which validation rejects). At 0.5 the text is ignored (12/12 words wrong). Loudness: -25.7 dBFS at 1.0, -17.4 at 2.0, -9.0 at 5.0. Takes vary ±4 dB on seed alone.
 - **V16 — Load and memory.** `timing.json` — load 15.29 s from warm cache; 4.95 GB after load. Peak 5.4 GB (short), 7.9 GB (49 s take); reserved grows to 11.1 GB over a session.
 - **V17 — MIOpen.** `miopen_default.json`, `miopen_off.json` — first take at each new length costs 10-11 s extra with MIOpen default; `cudnn.enabled = False` removes it.
 - **V18 — Coexistence.** `coexist.json` — Whisper + Reverb + VoxCPM2 in one process, interleaved both ways, alive throughout: 7.0 GB allocated, 7.6 GB reserved.
 - **V19 — Dependencies.** `pyproject.diff` — the `tts-voxcpm` extra plus lock overrides; `install-dryrun-summary.txt` — 100 packages raw, fsspec downgrade fixed by the overrides.
 - **V20 — Oracle.** `oracle.json` — 9/266 words wrong (3.4%), every error a brand token, number format, or homophone.
-- **V21 — Determinism.** `timing.json`, README — `torch.manual_seed(n)` before the call gives byte-identical takes; different seeds differ.
+- **V21 — Determinism.** Spike README, "Determinism" — `torch.manual_seed(n)` before the call gives byte-identical takes; different seeds differ.
 
 ### ASSUMED
 
@@ -232,7 +232,7 @@ The server builds the library input:
 }
 ```
 
-**Response 400:** text empty when `model` is not `voxcpm2`; invalid `voice_id`; reference under 1 s or over 30 s; could not decode the reference; `design`/`style` syntax errors (not applicable here but kept for the speech path).
+**Response 400:** text empty when `model` is not `voxcpm2`; invalid `voice_id`; reference under 1 s or over 30 s; could not decode the reference.
 
 **Response 409:** `voice_id` collides with a preset or an existing clone (either engine).
 
@@ -397,7 +397,7 @@ Each named and testable.
 
 10. **SEC-V10 — CSP unchanged, no new inline script/style, no `innerHTML`.** The engine selector and new fields are added with `textContent` and `createElement`; CSP does not change. Test: `test_index_page` (existing, extended to check for voxcpm2 additions).
 
-11. **SEC-V11 — supply chain.** Lock overrides keep `torchcodec`, `gradio`, `gradio-client`, `hf-gradio`, `funasr`, `spaces`, `datasets`, `argbind`, `modelscope`, and `modelscope-hub` out. No existing pinned version changes. `uv sync --all-groups` (no extras) still resolves to CPU torch. Test: existing `test_lock_default.py` passes unchanged; new `test_no_extras_resolves_to_the_cpu_build` still passes.
+11. **SEC-V11 — supply chain.** Lock overrides keep `torchcodec`, `gradio`, `gradio-client`, `hf-gradio`, `funasr`, `spaces`, `datasets`, `argbind`, `modelscope`, and `modelscope-hub` out. No existing pinned version changes. `uv sync --all-groups` (no extras) still resolves to CPU torch. Test: existing `test_lock_default.py` (including `test_no_extras_resolves_to_the_cpu_build`, which exists today) passes unchanged.
 
 12. **SEC-V12 — `src/` never imports `voxcpm` at module import time.** All `import voxcpm` and `import torch` calls are inside function bodies (`_load_voxcpm2`, `VoxCPM2Engine.__init__`). CI has no `tts-voxcpm` extra. Test: `test_engines_do_not_import_voxcpm_at_import_time` mirrors the existing Reverb check.
 
@@ -486,7 +486,7 @@ No change to the CSP. No new third-party scripts. All engine names, voice names,
 
 ## 12. Acceptance scenarios
 
-Every scenario runs without a GPU. Tests fake `voxcpm` through `sys.modules`; no test imports `voxcpm` or `torch` for real.
+Every scenario runs without a GPU. Tests fake `voxcpm` through `sys.modules`; no test imports `voxcpm` for real (`torch` is imported for real, as the existing suite already does).
 
 ### 12.1 Config
 
