@@ -16,10 +16,9 @@ class Settings(BaseSettings):
     device: str = "auto"  # auto | cuda | cpu
     compute_type: str = "auto"  # auto | float16 | int8 | int8_float16
 
-    # Moonshine (fast path for short audio)
+    # Moonshine (fast path for short English audio; selected by name)
     moonshine_enabled: bool = True
     moonshine_model: str = "UsefulSensors/moonshine-base"
-    fast_path_max_seconds: float = 10.0  # audio shorter than this can use Moonshine
 
     # Transcription defaults
     beam_size: int = 5

@@ -393,7 +393,7 @@ def transcribe(base, key, path, step, expected=None) -> dict | None:
     with open(path, "rb") as f:
         data = f.read()
     body, ctype = _multipart(
-        {"response_format": "json"},
+        {"response_format": "json", "model": "whisper-1"},
         {"file": (os.path.basename(path), data, "audio/wav")},
     )
     status, resp, _ = _request(

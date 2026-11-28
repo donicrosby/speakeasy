@@ -53,3 +53,36 @@ def test_voices_dir_set_uses_value_as_is(monkeypatch, clean_env):
     assert s.voices_dir == "/custom"
     # The set value is the voices root itself — no /voices suffix is appended.
     assert s.voices_dir_default() == "/custom"
+
+
+def test_config_field_names(clean_env):
+    # Exactly these settings exist, and nothing else — removing the duration
+    # auto-route dropped its knob and left every other name and default alone.
+    names = set(Settings.model_fields)
+    assert "fast_path_max_seconds" not in names
+    assert names == {
+        "api_key",
+        "beam_size",
+        "bind",
+        "compute_type",
+        "device",
+        "hf_home",
+        "moonshine_enabled",
+        "moonshine_model",
+        "port",
+        "tts_device",
+        "tts_enabled",
+        "tts_model",
+        "tts_variant",
+        "tts_voxcpm_enabled",
+        "tts_voxcpm_idle_seconds",
+        "tts_voxcpm_model",
+        "vad_filter",
+        "voices_dir",
+        "whisper_model",
+    }
+    s = Settings()
+    assert s.whisper_model == "large-v3-turbo"
+    assert s.moonshine_enabled is True
+    assert s.beam_size == 5
+    assert s.vad_filter is True

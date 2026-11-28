@@ -16,9 +16,7 @@ from __future__ import annotations
 
 import gc
 import math
-import os
 import re
-import tempfile
 import threading
 import time
 from dataclasses import dataclass, field
@@ -316,17 +314,3 @@ class VoxCPM2Engine:
         self._model = None
         self._torch.cuda.empty_cache()
         gc.collect()
-
-
-def probe_duration(audio_bytes: bytes) -> float | None:
-    """Duration of an audio file in seconds, or None if it can't be read."""
-    tmp = tempfile.NamedTemporaryFile(suffix=".audio", delete=False)
-    try:
-        tmp.write(audio_bytes)
-        tmp.close()
-        info = sf.info(tmp.name)
-        return round(info.duration, 2)
-    except Exception:
-        return None
-    finally:
-        os.unlink(tmp.name)
