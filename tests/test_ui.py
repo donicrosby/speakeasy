@@ -480,3 +480,80 @@ def test_listen_split_treats_unknown_duration_as_long():
         r"duration\s*>\s*0\s*&&\s*duration\s*<=\s*LISTEN_MOONSHINE_MAX_SECONDS",
         body,
     )
+
+
+# --- streaming playback ---------------------------------------------------
+
+
+def test_csp_unchanged(client):
+    """The page's content-security policy is unchanged by streaming."""
+    r = client.get("/")
+    assert r.status_code == 200
+    assert r.headers["content-security-policy"] == CSP
+
+
+def test_page_no_external_urls():
+    """The streaming page adds no external URL, so `connect-src 'self'` holds."""
+    for name in ("index.html", "app.js"):
+        assert not REMOTE_URL.search(_read(name)), f"{name}: remote URL is forbidden"
+
+
+def test_page_streams_pcm_web_audio():
+    """The page plays pcm as it arrives through one Web Audio timeline.
+
+    The page is not executed here: no browser is available in this environment,
+    so this pins the shipped source the orchestrator re-checks in a real browser
+    at landing.
+    """
+    js = _read("app.js")
+    # Speak asks for pcm carried in server-sent events.
+    payload = _function_body(js, "streamingPayload")
+    assert re.search(r'response_format:\s*"pcm"', payload)
+    assert re.search(r'stream_format:\s*"sse"', payload)
+    # The two events the route sends, and the header naming the take's rate.
+    assert '"speech.audio.delta"' in js
+    assert '"speech.audio.done"' in js
+    assert "X-Speakeasy-Sample-Rate" in js
+    # The events are read off the fetch body as they arrive, one base64 chunk at
+    # a time.
+    stream = _function_body(js, "runSpeechStreaming")
+    assert "getReader()" in js
+    assert "atob(" in js
+    assert "SAMPLE_RATE_HEADER" in stream
+    # Each chunk is scheduled on one AudioContext timeline at the header's rate,
+    # resumed for the click that started the request.
+    player = _function_body(js, "newStreamPlayer")
+    assert re.search(r"new AudioCtx\(\{\s*sampleRate:", player)
+    assert ".resume()" in player
+    schedule = _function_body(js, "scheduleChunk")
+    assert "createBufferSource" in schedule
+    assert "copyToChannel" in schedule
+    assert re.search(r"source\.start\(", schedule)
+    # At done the samples become a WAV Blob for the player and the download link.
+    assert "encodeWav(" in js
+    assert "speak-audio" in js
+    assert "speak-download" in js
+    # The four statistics come from the done event's usage object.
+    assert "usage.audio_duration" in js
+    assert "usage.elapsed" in js
+    assert "usage.rtf" in js
+
+
+def test_page_fallback_no_readable_stream():
+    """Without a readable fetch body the page sends no stream_format.
+
+    The fallback is today's non-streaming request, pinned here the same way.
+    """
+    js = _read("app.js")
+    # The capability check names the fetch body reader.
+    assert "ReadableStream" in js
+    assert _function_body(js, "streamingAvailable")
+    # The fallback request is today's: no streaming field.
+    fallback = _function_body(js, "runSpeechFallback")
+    assert "stream_format" not in fallback
+    # The chooser falls back only when the browser cannot stream.
+    chooser = _function_body(js, "runSpeech")
+    assert "streamingAvailable()" in chooser
+    assert "runSpeechFallback(" in chooser
+    # The non-streaming body still asks for wav, as before.
+    assert re.search(r'response_format:\s*"wav"', _function_body(js, "speechPayload"))
