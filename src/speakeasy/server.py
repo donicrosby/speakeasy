@@ -14,14 +14,19 @@ Endpoints:
 
 from __future__ import annotations
 
+import base64
 import io
+import json
 import logging
 import os
 import secrets
 import tempfile
 import threading
 import time
+from collections import deque
+from collections.abc import Callable, Iterator
 from contextlib import asynccontextmanager
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal
 
@@ -37,7 +42,12 @@ from fastapi import (
     Security,
     UploadFile,
 )
-from fastapi.responses import FileResponse, JSONResponse, Response
+from fastapi.responses import (
+    FileResponse,
+    JSONResponse,
+    Response,
+    StreamingResponse,
+)
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
@@ -544,6 +554,190 @@ SPEECH_FORMATS = {  # response_format -> (libsndfile format, subtype, content ty
     "pcm": (None, None, "audio/pcm"),  # raw s16le mono at the engine's rate
 }
 
+# Streaming delivery. A stream is chunked: the engine's audio is encoded and
+# handed to the response as it is generated, rather than encoded whole at the
+# end. The generating thread and the response share a byte-bounded buffer.
+STREAM_BUFFER_BYTES = 64 * 2**20  # the worst-case legal take, rounded up
+STREAM_ERROR_MESSAGE = "speech generation failed mid-stream"
+
+# The response formats that can be written to a stream. `pcm` is raw s16le with
+# no container; a container is patched by seeking, which a stream cannot do, so
+# `_probe_streaming_format` decides the rest (see its docstring).
+_STREAMING_FORMATS = ("pcm",)
+
+
+class _NoSeekSink(io.BytesIO):
+    """A byte sink that refuses to seek, standing in for a streaming socket.
+
+    libsndfile patches a container's header by seeking back to it once the
+    length is known; a socket cannot, so a format that needs the patch cannot be
+    streamed. `pcm` has no header and survives.
+    """
+
+    def seek(self, *args: object) -> int:
+        raise OSError("a streaming sink cannot seek")
+
+    def seekable(self) -> bool:
+        return False
+
+
+def _encode_chunk(
+    audio: np.ndarray, fmt: str, sample_rate: int, sink: io.BufferedIOBase
+) -> None:
+    """Write one chunk of `audio` in `fmt` to `sink`.
+
+    `pcm` is raw s16le and goes straight to the sink. Every other format is
+    written through libsndfile, which patches its container header by seeking —
+    the property `_probe_streaming_format` measures.
+    """
+    snd, subtype, _ = SPEECH_FORMATS[fmt]
+    if snd is None:
+        sink.write((np.clip(audio, -1, 1) * 32767).astype("<i2").tobytes())
+        return
+    with sf.SoundFile(
+        sink, "w", samplerate=sample_rate, channels=1, format=snd, subtype=subtype
+    ) as f:
+        f.write(audio)
+
+
+def _probe_streaming_format(
+    fmt: str, sample_rate: int, *, seconds: float = 0.16, chunks: int = 3
+) -> int | None:
+    """The samples an independent reader recovers from `chunks` chunks of `fmt`.
+
+    Encodes to a sink that cannot seek and reads the assembled bytes back. A
+    count other than `chunks * seconds * sample_rate`, or an error, means the
+    format cannot be streamed. `pcm` has no container, so its bytes are counted
+    directly. Measured 2026-11-27 (libsndfile 0.14.0, 3 chunks of 0.16 s at
+    24 kHz, 11520 samples expected): `wav` refuses to open for writing; `mp3`
+    decodes to 5400 samples; `flac` fails to decode; only `pcm` recovers all
+    11520 samples.
+    """
+    sink = _NoSeekSink()
+    chunk = np.zeros(int(sample_rate * seconds), dtype=np.float32)
+    try:
+        for _ in range(chunks):
+            _encode_chunk(chunk, fmt, sample_rate, sink)
+            sink.flush()
+    except Exception:  # noqa: BLE001 — any failure means the format cannot stream
+        return None
+    data = sink.getvalue()
+    if SPEECH_FORMATS[fmt][0] is None:
+        return len(data) // 2  # raw s16le, no reader to consult
+    try:
+        decoded, _ = sf.read(io.BytesIO(data), dtype="float32")
+    except Exception:  # noqa: BLE001 — an unreadable container cannot stream
+        return None
+    return len(decoded)
+
+
+def _stream_format_422(fmt: str) -> JSONResponse:
+    """The fixed 422 for streaming a format the probe cannot stream."""
+    return JSONResponse(
+        status_code=422,
+        content={
+            "error": {
+                "message": (
+                    f"streaming not supported for format '{fmt}'. "
+                    f"Supported: {', '.join(_STREAMING_FORMATS)}"
+                )
+            }
+        },
+    )
+
+
+class _StreamBuffer:
+    """The hand-off between a streaming generation and the response body.
+
+    Bounded by the total take: a chunk that would take the generation past its
+    cap is refused instead of blocking, so a take larger than any legal one
+    stops with the mid-stream error while a legal take, which fits the cap, runs
+    to completion whatever the client does. The consumer blocks for the next
+    item; the producer never does.
+    """
+
+    def __init__(self, cap: int):
+        self._cap = cap
+        self._cond = threading.Condition()
+        self._chunks: deque[bytes] = deque()
+        self._produced = 0
+        self._terminal: tuple[str, object] | None = None
+
+    def put(self, data: bytes) -> bool:
+        """Queue `data`, or refuse it when it would exceed the cap."""
+        with self._cond:
+            if self._produced + len(data) > self._cap:
+                return False
+            self._produced += len(data)
+            self._chunks.append(data)
+            self._cond.notify_all()
+            return True
+
+    def finish(self, usage: dict) -> None:
+        """The generation completed; `usage` carries the final statistics."""
+        with self._cond:
+            self._terminal = ("done", usage)
+            self._cond.notify_all()
+
+    def fail(self, message: str) -> None:
+        """The generation failed after it had started; end the stream."""
+        with self._cond:
+            self._terminal = ("error", message)
+            self._cond.notify_all()
+
+    def stop_with(self, response: Response) -> None:
+        """The generation never started; answer the request with `response`."""
+        with self._cond:
+            self._terminal = ("response", response)
+            self._cond.notify_all()
+
+    def get(self) -> tuple[str, object]:
+        """Block for the next item: a chunk, or the terminal."""
+        with self._cond:
+            while not self._chunks and self._terminal is None:
+                self._cond.wait()
+            if self._chunks:
+                return ("chunk", self._chunks.popleft())
+            return self._terminal
+
+
+@dataclass
+class _StreamPlan:
+    """What the handler needs to stream one request.
+
+    `check` and `stream` run on the generating thread under `tts_lock`; `check`
+    returning a response stops the generation before any byte is sent. `bump`
+    runs after a completed take. `on_error` maps a failure before the first
+    chunk to the response the one-shot route answers with today.
+    """
+
+    engine_name: str
+    check: Callable[[], Response | None]
+    stream: Callable[[], Iterator[np.ndarray]]
+    sample_rate: Callable[[], int]
+    bump: Callable[[], None] | None
+    on_error: Callable[[Exception], Response]
+
+
+class _SpeechStream(StreamingResponse):
+    """A streaming speech response that records a client that leaves.
+
+    A disconnect mid-stream is an ordinary outcome: the generating thread runs
+    to completion on its own and releases the engine lock, so the response only
+    notes the event — it never answers a 500 and never logs a traceback. The
+    response ends early only when the client is gone or a send fails, which is
+    the moment to record it.
+    """
+
+    async def stream_response(self, send):
+        completed = False
+        try:
+            await super().stream_response(send)
+            completed = True
+        finally:
+            if not completed:
+                log.info("client disconnected during stream")
+
 
 class SpeechRequest(BaseModel):
     input: str = Field(max_length=4096)
@@ -564,6 +758,9 @@ class SpeechRequest(BaseModel):
     cfg: float | None = Field(default=None, ge=1.0, le=5.0)
     design: str | None = Field(default=None, min_length=1, max_length=300)
     style: str | None = Field(default=None, min_length=1, max_length=200)
+    # Delivery: absent is today's one-shot response; `"sse"` is a server-sent
+    # event stream, `"audio"` raw chunked bytes in `response_format`.
+    stream_format: Literal["sse", "audio"] | None = None
 
 
 def _bad_request(message: str) -> JSONResponse:
@@ -610,37 +807,33 @@ def speech(req: SpeechRequest):
     # so an unlisted name answers 404 whatever the engines' states.
     if req.model not in _listed_tts_engines():
         return _unknown_model_404(req.model)
+    if req.stream_format is not None:
+        return _speech_stream(req)
     if req.model == "voxcpm2":
         return _speech_voxcpm2(req)
     return _speech_reverb(req)
 
 
+def _speech_stream(req: SpeechRequest):
+    """A streaming request: raw chunked bytes, or server-sent events.
+
+    The response format is checked first (before any engine state is read),
+    then the engine's own validation runs, and only then does the generating
+    thread start.
+    """
+    if req.response_format not in _STREAMING_FORMATS:
+        return _stream_format_422(req.response_format)
+    if req.model == "voxcpm2":
+        return _stream_voxcpm2(req)
+    return _stream_reverb(req)
+
+
 def _speech_reverb(req: SpeechRequest):
     """Reverb's speech path — unchanged for a request with no new fields."""
-    # A null voice is the 422 the field's old `str` annotation produced; the
-    # optional type a `voxcpm2` request needs must not move Reverb's contract.
-    if req.voice is None:
-        return _null_voice_422()
-    if resp := tts_unavailable():
-        return resp
-    # `cfg`, `design` and `style` are VoxCPM2-only: a set value asks for the
-    # other engine.
-    if req.cfg is not None or req.design is not None or req.style is not None:
-        return _bad_request(
-            "cfg, design and style are voxcpm2-only fields; set model=voxcpm2"
-        )
-    text = req.input.strip()
-    if not text:
-        return _bad_request("input must not be empty")
-    try:
-        voice = _resolve_voice(req.voice)
-    except ValueError as e:
-        return _bad_request(str(e))
-    language = req.language or voice.language
-    if language not in tts.languages:
-        return _bad_request(
-            f"unsupported language {language!r}. Supported: {', '.join(tts.languages)}"
-        )
+    error, prepared = _reverb_prepare(req)
+    if error is not None:
+        return error
+    text, voice, language = prepared
     # The shared lock serialises both engines' inference; Reverb keeps its own
     # engine lock too.
     with tts_lock:
@@ -649,6 +842,69 @@ def _speech_reverb(req: SpeechRequest):
         )
     return _speech_response(
         audio, elapsed, req.response_format, tts.name, tts.sample_rate
+    )
+
+
+def _reverb_prepare(req: SpeechRequest):
+    """Validate a Reverb request: `(error, None)` or `(None, (text, voice, lang))`."""
+    # A null voice is the 422 the field's old `str` annotation produced; the
+    # optional type a `voxcpm2` request needs must not move Reverb's contract.
+    if req.voice is None:
+        return _null_voice_422(), None
+    if resp := tts_unavailable():
+        return resp, None
+    # `cfg`, `design` and `style` are VoxCPM2-only: a set value asks for the
+    # other engine.
+    if req.cfg is not None or req.design is not None or req.style is not None:
+        return (
+            _bad_request(
+                "cfg, design and style are voxcpm2-only fields; set model=voxcpm2"
+            ),
+            None,
+        )
+    text = req.input.strip()
+    if not text:
+        return _bad_request("input must not be empty"), None
+    try:
+        voice = _resolve_voice(req.voice)
+    except ValueError as e:
+        return _bad_request(str(e)), None
+    language = req.language or voice.language
+    if language not in tts.languages:
+        return (
+            _bad_request(
+                f"unsupported language {language!r}. Supported: {', '.join(tts.languages)}"
+            ),
+            None,
+        )
+    return None, (text, voice, language)
+
+
+def _stream_reverb(req: SpeechRequest) -> Response:
+    """Reverb has no streaming entry point: one chunk, the finished take."""
+    error, prepared = _reverb_prepare(req)
+    if error is not None:
+        return error
+    text, voice, language = prepared
+    return _stream_response(
+        req,
+        _StreamPlan(
+            engine_name=tts.name,
+            check=tts_unavailable,
+            stream=lambda: tts.synthesize_streaming(
+                text, voice, language, seed=req.seed, speed=req.speed
+            ),
+            sample_rate=lambda: tts.sample_rate,
+            bump=None,
+            on_error=lambda _exc: _reverb_stream_error(),
+        ),
+    )
+
+
+def _reverb_stream_error() -> Response:
+    return JSONResponse(
+        status_code=500,
+        content={"error": {"message": "reverb-tts failed to generate speech"}},
     )
 
 
@@ -665,73 +921,16 @@ def _speech_voxcpm2(req: SpeechRequest):
     """VoxCPM2's speech path: lifecycle gate, validation, one locked inference."""
     global voxcpm2_last_used
 
-    # 1. Single-flight lifecycle gate: a request in `not_loaded` starts exactly
-    #    one load and answers 503; `loading` answers 503 and starts nothing.
-    if resp := _ensure_voxcpm2_loading():
-        return resp
-    # 2. Gate check without the lock; a pass is not a promise.
-    if resp := voxcpm2_unavailable():
-        return resp
-    # 3. Validation (needs no lock).
-    text = req.input.strip()
-    if not text:
-        return _bad_request("input must not be empty")
-    if text.startswith("("):
-        return _bad_request(
-            "input starting with '(' is reserved for design and style; "
-            "remove the leading parenthesis or use the design field"
-        )
-    if req.speed != 1.0:
-        return _bad_request("speed must be 1.0 for the voxcpm2 engine")
-    if req.design is not None and req.style is not None:
-        return _bad_request("at most one of design and style may be set")
-    # An omitted `voice` is the model's own voice, and an explicit null resolves
-    # to `default` too; any other id must be a saved clone.
-    voice_id = (
-        "default"
-        if "voice" not in req.model_fields_set or req.voice is None
-        else req.voice
-    )
-    if req.design is not None and voice_id != "default":
-        return _bad_request("design requires voice: 'default'")
-    for value in (req.design, req.style):
-        if value is not None and (
-            "(" in value or ")" in value or "\n" in value or "\r" in value
-        ):
-            return _bad_request(
-                "design and style must not contain parentheses or newlines"
-            )
-    reference = None
-    prompt_text = None
-    if voice_id != "default":
-        store = voxcpm2_store
-        if store is None or not store.exists(voice_id):
-            return _bad_request(_voxcpm2_unknown_voice(voice_id))
-        try:
-            info = store.info(voice_id)
-        except ValueError:
-            return _bad_request(_voxcpm2_unknown_voice(voice_id))
-        reference = str(store.reference_path(voice_id))
-        prompt_text = info.get("transcript")
-    # The library reads a leading parenthesized prefix as design/style syntax;
-    # the server builds it itself and hands the engine one text.
-    prefix = req.design if req.design is not None else req.style
-    library_text = f"({prefix}){text}" if prefix is not None else text
-    cfg = req.cfg if req.cfg is not None else 2.0
+    error, prepared = _voxcpm2_prepare(req)
+    if error is not None:
+        return error
+    library_text, reference, prompt_text, cfg, voice_id = prepared
 
-    # 4-9. One inference at a time: acquire the shared lock, re-check the engine
+    # One inference at a time: acquire the shared lock, re-check the engine
     # under it, seed and generate, then bump last-used — all under the lock.
     with tts_lock:
-        if voxcpm2_state == "error":
-            return voxcpm2_503("error")
-        if voxcpm2_state == "disabled":
-            return voxcpm2_503("disabled")
-        if voxcpm2_state != "ready" or voxcpm2 is None:
-            # The engine was unloaded between the gate and the lock: restart the
-            # load and answer 503, never 500.
-            if resp := _ensure_voxcpm2_loading():
-                return resp
-            return voxcpm2_503("not_loaded")
+        if resp := _voxcpm2_under_lock():
+            return resp
         engine = voxcpm2
         try:
             audio, elapsed = engine.synthesize(
@@ -759,6 +958,133 @@ def _speech_voxcpm2(req: SpeechRequest):
     )
 
 
+def _voxcpm2_prepare(req: SpeechRequest):
+    """Validate a VoxCPM2 request: `(error, None)` or `(None, prepared)`.
+
+    `prepared` is `(library_text, reference, prompt_text, cfg, voice_id)`. The
+    lifecycle gate runs here, before any lock and before any byte is sent.
+    """
+    # 1. Single-flight lifecycle gate: a request in `not_loaded` starts exactly
+    #    one load and answers 503; `loading` answers 503 and starts nothing.
+    if resp := _ensure_voxcpm2_loading():
+        return resp, None
+    # 2. Gate check without the lock; a pass is not a promise.
+    if resp := voxcpm2_unavailable():
+        return resp, None
+    # 3. Validation (needs no lock).
+    text = req.input.strip()
+    if not text:
+        return _bad_request("input must not be empty"), None
+    if text.startswith("("):
+        return (
+            _bad_request(
+                "input starting with '(' is reserved for design and style; "
+                "remove the leading parenthesis or use the design field"
+            ),
+            None,
+        )
+    if req.speed != 1.0:
+        return _bad_request("speed must be 1.0 for the voxcpm2 engine"), None
+    if req.design is not None and req.style is not None:
+        return _bad_request("at most one of design and style may be set"), None
+    # An omitted `voice` is the model's own voice, and an explicit null resolves
+    # to `default` too; any other id must be a saved clone.
+    voice_id = (
+        "default"
+        if "voice" not in req.model_fields_set or req.voice is None
+        else req.voice
+    )
+    if req.design is not None and voice_id != "default":
+        return _bad_request("design requires voice: 'default'"), None
+    for value in (req.design, req.style):
+        if value is not None and (
+            "(" in value or ")" in value or "\n" in value or "\r" in value
+        ):
+            return (
+                _bad_request(
+                    "design and style must not contain parentheses or newlines"
+                ),
+                None,
+            )
+    reference = None
+    prompt_text = None
+    if voice_id != "default":
+        store = voxcpm2_store
+        if store is None or not store.exists(voice_id):
+            return _bad_request(_voxcpm2_unknown_voice(voice_id)), None
+        try:
+            info = store.info(voice_id)
+        except ValueError:
+            return _bad_request(_voxcpm2_unknown_voice(voice_id)), None
+        reference = str(store.reference_path(voice_id))
+        prompt_text = info.get("transcript")
+    # The library reads a leading parenthesized prefix as design/style syntax;
+    # the server builds it itself and hands the engine one text.
+    prefix = req.design if req.design is not None else req.style
+    library_text = f"({prefix}){text}" if prefix is not None else text
+    cfg = req.cfg if req.cfg is not None else 2.0
+    return None, (library_text, reference, prompt_text, cfg, voice_id)
+
+
+def _voxcpm2_under_lock() -> Response | None:
+    """The engine-state re-check the route makes while holding `tts_lock`."""
+    if voxcpm2_state == "error":
+        return voxcpm2_503("error")
+    if voxcpm2_state == "disabled":
+        return voxcpm2_503("disabled")
+    if voxcpm2_state != "ready" or voxcpm2 is None:
+        # The engine was unloaded between the gate and the lock: restart the
+        # load and answer 503, never 500.
+        if resp := _ensure_voxcpm2_loading():
+            return resp
+        return voxcpm2_503("not_loaded")
+    return None
+
+
+def _stream_voxcpm2(req: SpeechRequest) -> Response:
+    """VoxCPM2 streams through `generate_streaming`, chunk by chunk."""
+    error, prepared = _voxcpm2_prepare(req)
+    if error is not None:
+        return error
+    library_text, reference, prompt_text, cfg, voice_id = prepared
+    return _stream_response(
+        req,
+        _StreamPlan(
+            engine_name="voxcpm2",
+            check=_voxcpm2_under_lock,
+            stream=lambda: voxcpm2.synthesize_streaming(
+                library_text,
+                reference=reference,
+                prompt_text=prompt_text,
+                cfg=cfg,
+                seed=req.seed,
+            ),
+            sample_rate=lambda: voxcpm2.sample_rate,
+            bump=_bump_voxcpm2,
+            on_error=lambda exc: _voxcpm2_stream_error(exc, voice_id),
+        ),
+    )
+
+
+def _bump_voxcpm2() -> None:
+    """Mark the engine used; the generating thread holds `tts_lock`."""
+    global voxcpm2_last_used
+    voxcpm2_last_used = time.monotonic()
+
+
+def _voxcpm2_stream_error(exc: Exception, voice_id: str) -> Response:
+    """The one-shot route's response for a failure before the first chunk."""
+    if isinstance(exc, BadTake):
+        return voxcpm2_bad_take()
+    if isinstance(exc, FileNotFoundError):
+        return _bad_request(_voxcpm2_unknown_voice(voice_id))
+    log.exception("voxcpm2 streaming failed")
+    return JSONResponse(
+        status_code=500,
+        content={"error": {"message": "voxcpm2 failed to generate speech"}},
+    )
+
+
 def _speech_response(
     audio: np.ndarray, elapsed: float, fmt: str, engine_name: str, sample_rate: int
 ) -> Response:
@@ -778,6 +1104,130 @@ def _speech_response(
             "X-Speakeasy-RTF": str(round(elapsed / max(duration, 0.01), 3)),
         },
     )
+
+
+def _stream_response(req: SpeechRequest, plan: _StreamPlan) -> Response:
+    """Run one streaming generation behind a bounded buffer and build the reply.
+
+    The generating thread owns the engine lock for the whole take and hands its
+    chunks to the buffer; the handler waits for the first item before it builds
+    the response, so an error the one-shot route would answer is still answered
+    with its status and body before any byte is sent.
+    """
+    buffer = _StreamBuffer(STREAM_BUFFER_BYTES)
+    rate: list[int] = []
+
+    def generate() -> None:
+        stream = None
+        started = False
+        total = 0
+        try:
+            with tts_lock:
+                stop = plan.check()
+                if stop is not None:
+                    buffer.stop_with(stop)
+                    return
+                sample_rate = plan.sample_rate()
+                rate.append(sample_rate)
+                stream = plan.stream()
+                t0 = time.monotonic()
+                for chunk in stream:
+                    buf = io.BytesIO()
+                    _encode_chunk(chunk, req.response_format, sample_rate, buf)
+                    if not buffer.put(buf.getvalue()):
+                        # The cap ends a generation; it never parks one.
+                        log.error("speech stream exceeded its buffer cap")
+                        if plan.bump is not None:
+                            plan.bump()
+                        buffer.fail(STREAM_ERROR_MESSAGE)
+                        return
+                    started = True
+                    total += len(chunk)
+                elapsed = time.monotonic() - t0
+                if plan.bump is not None:
+                    plan.bump()
+                duration = total / sample_rate
+                buffer.finish(
+                    {
+                        "engine": plan.engine_name,
+                        "elapsed": round(elapsed, 3),
+                        "audio_duration": round(duration, 3),
+                        "rtf": round(elapsed / max(duration, 0.01), 3),
+                    }
+                )
+        except Exception as exc:  # noqa: BLE001 — never leak engine internals
+            if started:
+                log.error("speech stream failed mid-generation")
+                buffer.fail(STREAM_ERROR_MESSAGE)
+            else:
+                buffer.stop_with(plan.on_error(exc))
+        finally:
+            if stream is not None:
+                try:
+                    stream.close()
+                except Exception:  # noqa: BLE001 — closing is best effort
+                    log.error("closing the speech stream failed")
+
+    threading.Thread(target=generate, name="speech-stream", daemon=True).start()
+
+    first = buffer.get()
+    if first[0] == "response":
+        return first[1]
+    sample_rate = rate[0]
+    if req.stream_format == "sse":
+        return _SpeechStream(
+            _sse_body(buffer, first),
+            media_type="text/event-stream",
+            headers={
+                "Cache-Control": "no-store",
+                "X-Accel-Buffering": "no",
+                "X-Speakeasy-Sample-Rate": str(sample_rate),
+            },
+        )
+    return _SpeechStream(
+        _raw_body(buffer, first),
+        media_type=SPEECH_FORMATS[req.response_format][2],
+        headers={
+            "X-Speakeasy-Engine": plan.engine_name,
+            "X-Speakeasy-Sample-Rate": str(sample_rate),
+        },
+    )
+
+
+def _sse_event(payload: dict) -> bytes:
+    return f"data: {json.dumps(payload, separators=(',', ':'))}\n\n".encode()
+
+
+def _sse_body(buffer: _StreamBuffer, first: tuple) -> Iterator[bytes]:
+    """The event stream: zero or more deltas, then one done or one error."""
+    item = first
+    while True:
+        kind, payload = item
+        if kind == "chunk":
+            yield _sse_event(
+                {
+                    "type": "speech.audio.delta",
+                    "audio": base64.b64encode(payload).decode(),
+                }
+            )
+        elif kind == "done":
+            yield _sse_event({"type": "speech.audio.done", "usage": payload})
+            return
+        else:  # a fixed message, never exception text
+            yield _sse_event({"type": "error", "error": {"message": payload}})
+            return
+        item = buffer.get()
+
+
+def _raw_body(buffer: _StreamBuffer, first: tuple) -> Iterator[bytes]:
+    """The raw chunked body: the encoded chunks, truncated on a mid-stream error."""
+    item = first
+    while True:
+        kind, payload = item
+        if kind != "chunk":
+            return
+        yield payload
+        item = buffer.get()
 
 
 # ---------------------------------------------------------------------------
