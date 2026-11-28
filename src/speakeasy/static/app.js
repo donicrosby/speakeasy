@@ -310,7 +310,9 @@ async function runTranscription(blob, duration) {
   const stateEl = $("listen-state");
   stateEl.textContent = MSG.working;
   const model =
-    duration <= LISTEN_MOONSHINE_MAX_SECONDS ? "moonshine-base" : "whisper-1";
+    duration > 0 && duration <= LISTEN_MOONSHINE_MAX_SECONDS
+      ? "moonshine-base"
+      : "whisper-1";
   const form = new FormData();
   form.append("file", blob, "audio.wav");
   form.append("model", model);

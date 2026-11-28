@@ -468,3 +468,15 @@ def test_listen_recording_passes_its_duration():
         r"runTranscription\(\s*captured\.blob\s*,\s*captured\.duration\s*\)",
         body,
     )
+
+
+def test_listen_split_treats_unknown_duration_as_long():
+    # `toWav` reports duration 0 when WebAudio cannot decode the upload; the raw
+    # bytes still go to the server, which finds no duration either. An unknown
+    # length is not a short one, so the split must select Whisper for it, as the
+    # old server-side probe did when it knew nothing.
+    body = _function_body(_read("app.js"), "runTranscription")
+    assert re.search(
+        r"duration\s*>\s*0\s*&&\s*duration\s*<=\s*LISTEN_MOONSHINE_MAX_SECONDS",
+        body,
+    )
