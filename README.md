@@ -290,6 +290,110 @@ input; check the input length and try again"}}`), so the caller can ask again
   permitted); Reverb-TTS's are CC BY-NC 4.0 (non-commercial) — see
   [License](#license).
 
+## Streaming speech
+
+A speech request can ask for its audio **as it is generated** instead of
+waiting for the whole take. Add `stream_format` to the JSON body:
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `stream_format` | string | *(none)* | `"sse"` for server-sent events, `"audio"` for a raw chunked body. Any other value is a `422`. Omitted means today's single non-streaming response |
+
+Only `pcm` can be streamed. A container format is written by seeking back to
+patch its header once the length is known, and a stream cannot seek, so asking
+to stream one is a `422`:
+
+```
+{"error": {"message": "streaming not supported for format 'wav'. Supported: pcm"}}
+```
+
+| `response_format` | Streams | Why |
+|-------------------|---------|-----|
+| `pcm` | yes | raw s16le mono — no container, no seeking |
+| `wav` | no (`422`) | libsndfile refuses to open a WAV on a sink that cannot seek |
+| `mp3` | no (`422`) | the assembled bytes decode to a fraction of the audio |
+| `flac` | no (`422`) | the assembled bytes do not decode |
+
+> **Difference from OpenAI.** OpenAI's `stream_format` defaults to `audio`
+> (raw chunked audio). Speakeasy's omitted `stream_format` means today's
+> non-streaming response; a raw stream is asked for explicitly with
+> `"stream_format": "audio"`.
+
+Both streaming forms carry `X-Speakeasy-Sample-Rate` — the engine's output
+rate in hertz (`24000` for Reverb, `48000` for VoxCPM2) — so a client can
+decode `pcm` without already knowing which engine answered.
+
+### Response forms
+
+| Form | `Content-Type` | Headers |
+|------|----------------|---------|
+| non-streaming (today) | per `response_format` | `X-Speakeasy-Engine`, `-Elapsed`, `-Audio-Duration`, `-RTF` |
+| raw chunked (`stream_format: "audio"`) | per `response_format` | `X-Speakeasy-Engine`, `X-Speakeasy-Sample-Rate` |
+| server-sent events (`stream_format: "sse"`) | `text/event-stream` | `Cache-Control: no-store`, `X-Accel-Buffering: no`, `X-Speakeasy-Sample-Rate` |
+
+On a raw chunked stream only `X-Speakeasy-Engine` and
+`X-Speakeasy-Sample-Rate` are sent as headers: the timing statistics are not
+known before the first byte, and speakeasy sends no trailers. On an event
+stream they arrive in the final event instead:
+
+| Statistic | Non-streaming | Raw chunked | Server-sent events |
+|-----------|---------------|-------------|--------------------|
+| engine | `X-Speakeasy-Engine` | `X-Speakeasy-Engine` | `usage.engine` |
+| sample rate | — | `X-Speakeasy-Sample-Rate` | `X-Speakeasy-Sample-Rate` |
+| elapsed | `X-Speakeasy-Elapsed` | — | `usage.elapsed` |
+| audio duration | `X-Speakeasy-Audio-Duration` | — | `usage.audio_duration` |
+| real-time factor | `X-Speakeasy-RTF` | — | `usage.rtf` |
+
+### Server-sent events
+
+`stream_format: "sse"` answers `text/event-stream`. The body is one `data:`
+line per event, and there are exactly two event types — zero or more
+`speech.audio.delta`, then one `speech.audio.done`:
+
+```
+data: {"type":"speech.audio.delta","audio":"<base64 pcm>"}
+data: {"type":"speech.audio.done","usage":{"engine":"voxcpm2","elapsed":1.234,"audio_duration":3.5,"rtf":0.35}}
+```
+
+The `usage` object carries speakeasy's four statistics — `engine`, `elapsed`,
+`audio_duration`, `rtf` — in place of OpenAI's token counts. There is no
+`data: [DONE]` line and no keepalive comment; the connection closes after
+`speech.audio.done`. A failure after the first byte ends the stream with one
+`{"type":"error","error":{"message":"…"}}` event.
+
+Read the events as they arrive with `curl --no-buffer`:
+
+```bash
+curl -s -N http://localhost:8080/v1/audio/speech \
+  -H "Authorization: Bearer $SPEAKEASY_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{"model":"voxcpm2","input":"Hello world","voice":"default","response_format":"pcm","stream_format":"sse"}'
+```
+
+### Raw chunked audio
+
+`stream_format: "audio"` answers with the format's own content type and
+`Transfer-Encoding: chunked`, the encoded audio as it is generated:
+
+```bash
+curl -s -N http://localhost:8080/v1/audio/speech \
+  -H "Authorization: Bearer $SPEAKEASY_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{"model":"reverb-tts","input":"Hello world","voice":"en_male_narrator_1","response_format":"pcm","stream_format":"audio"}' \
+  --output -
+```
+
+### Engines
+
+| Engine | `stream_format: "sse"` | `stream_format: "audio"` |
+|--------|------------------------|--------------------------|
+| `voxcpm2` | one `speech.audio.delta` per ~0.16 s chunk of generated audio | chunked bytes, one chunk per ~0.16 s |
+| `reverb-tts` | one delta carrying the finished take, then `done` | one chunk carrying the finished take |
+
+Reverb-TTS has no streaming entry point, so a streaming request to it returns
+the finished take as a single chunk when it is ready — documented behaviour,
+not an error.
+
 ## Engine routing
 
 There is no routing: the `model` field names the engine, and the request reaches
