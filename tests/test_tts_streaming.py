@@ -847,6 +847,94 @@ def test_engine_failure_after_final_chunk(client, monkeypatch):
     assert events[-1]["type"] == "error"
 
 
+class GeneratorBoom(BaseException):
+    """A failure `except Exception` cannot catch — a library calling `sys.exit`
+    inside its stream generator, or any other `BaseException`."""
+
+
+@pytest.mark.filterwarnings("ignore::pytest.PytestUnhandledThreadExceptionWarning")
+def test_generation_dying_after_a_chunk_ends_the_stream(client, monkeypatch, caplog):
+    """A `BaseException` past the first chunk ends the stream; it never hangs it."""
+    engine = StreamVox(chunks=4, exc=GeneratorBoom("gone"), exc_after=1)
+    monkeypatch.setattr(server, "voxcpm2", engine)
+    monkeypatch.setattr(server, "voxcpm2_state", "ready")
+    monkeypatch.setattr(server, "voxcpm2_store", None)
+
+    with caplog.at_level(logging.ERROR, logger="speakeasy"):
+        r = _speech(
+            client,
+            model="voxcpm2",
+            input="Hi",
+            voice="default",
+            response_format="pcm",
+            stream_format="sse",
+        )
+
+    assert r.status_code == 200
+    events = _sse_events(r.content)
+    assert len([e for e in events if e["type"] == "speech.audio.delta"]) == 1
+    assert events[-1] == {
+        "type": "error",
+        "error": {"message": server.STREAM_ERROR_MESSAGE},
+    }
+    assert len([rec for rec in caplog.records if rec.levelno >= logging.ERROR]) == 1
+
+
+@pytest.mark.filterwarnings("ignore::pytest.PytestUnhandledThreadExceptionWarning")
+def test_generation_dying_before_a_chunk_answers_a_500(client, monkeypatch, caplog):
+    """A `BaseException` before the first chunk answers with a status, not a hang.
+
+    The handler reads the sample rate from the generating thread's first item, so
+    a failure before that item must arrive as a response, never as an error item.
+    """
+    engine = StreamVox(chunks=4, exc=GeneratorBoom("gone"), exc_after=0)
+    monkeypatch.setattr(server, "voxcpm2", engine)
+    monkeypatch.setattr(server, "voxcpm2_state", "ready")
+    monkeypatch.setattr(server, "voxcpm2_store", None)
+
+    with caplog.at_level(logging.ERROR, logger="speakeasy"):
+        r = _speech(
+            client,
+            model="voxcpm2",
+            input="Hi",
+            voice="default",
+            response_format="pcm",
+            stream_format="sse",
+        )
+
+    assert r.status_code == 500
+    assert r.json() == {"error": {"message": "speech generation failed"}}
+    assert len([rec for rec in caplog.records if rec.levelno >= logging.ERROR]) == 1
+
+
+@pytest.mark.filterwarnings("ignore::pytest.PytestUnhandledThreadExceptionWarning")
+def test_raising_error_mapper_leaves_the_guard_to_answer(client, monkeypatch, caplog):
+    """An `on_error` mapper that raises still cannot leave the request hanging."""
+    engine = StreamVox(chunks=4, exc=RuntimeError("engine boom"), exc_after=0)
+    monkeypatch.setattr(server, "voxcpm2", engine)
+    monkeypatch.setattr(server, "voxcpm2_state", "ready")
+    monkeypatch.setattr(server, "voxcpm2_store", None)
+
+    def explode(_exc, _voice_id):
+        raise RuntimeError("mapper boom")
+
+    monkeypatch.setattr(server, "_voxcpm2_stream_error", explode)
+
+    with caplog.at_level(logging.ERROR, logger="speakeasy"):
+        r = _speech(
+            client,
+            model="voxcpm2",
+            input="Hi",
+            voice="default",
+            response_format="pcm",
+            stream_format="sse",
+        )
+
+    assert r.status_code == 500
+    assert r.json() == {"error": {"message": "speech generation failed"}}
+    assert len([rec for rec in caplog.records if rec.levelno >= logging.ERROR]) == 1
+
+
 def test_stream_leaks_no_exception_text(client, monkeypatch, caplog):
     engine = StreamVox(
         chunks=4, exc=RuntimeError("secret /path/to/weights"), exc_after=2
@@ -1151,8 +1239,9 @@ def test_lock_held_by_generating_thread(client, monkeypatch):
     thread.join(10)
 
     assert result["r"].status_code == 200
-    assert owners, "the lock was never taken"
-    assert "handler-thread" not in owners
+    # Only the generating thread takes `tts_lock`, and it names itself
+    # "speech-stream"; the handler does not, whatever thread it runs on.
+    assert owners == ["speech-stream"]
 
 
 def test_sse_stream_cache_control(client, vox_ready):
