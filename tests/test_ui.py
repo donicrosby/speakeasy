@@ -539,6 +539,51 @@ def test_page_streams_pcm_web_audio():
     assert "usage.rtf" in js
 
 
+def test_page_plays_live_only_when_the_engine_keeps_up():
+    """The page holds 1.5 s of audio, then decides once whether to play live.
+
+    The decision is a rate — the audio received after the first chunk, over the
+    seconds since the first chunk arrived, at least 1 — and it is made once, so a
+    slow engine is never re-judged. The first chunk is left out of the rate.
+    """
+    js = _read("app.js")
+    # The lead is 1.5 seconds of audio, a named constant.
+    assert re.search(r"LIVE_LEAD_SECONDS\s*=\s*1\.5", js)
+    receive = _function_body(js, "receiveChunk")
+    assert "LIVE_LEAD_SECONDS" in receive
+    assert "player.pending" in receive
+    # The keep-up test is made once: `tested` gates it in the receiver...
+    assert re.search(r"!\s*player\.tested", receive)
+    decide = _function_body(js, "decideKeepUp")
+    # ...and is set when the decision is taken.
+    assert re.search(r"player\.tested\s*=\s*true", decide)
+    # The first chunk is left out of the rate: the samples from index 1.
+    assert re.search(r"audioSeconds\(player,\s*player\.samples,\s*1\)", decide)
+    assert re.search(r"kept\s*/\s*elapsed\s*<\s*1", decide)
+
+
+def test_page_refills_once_and_plays_the_rest():
+    """A live delta that arrives late switches to refill; the rest plays at done.
+
+    The late delta is kept, not scheduled, and whatever is still unscheduled at
+    ``speech.audio.done`` is played as one block from the later of the previous
+    chunk's end and the present.
+    """
+    js = _read("app.js")
+    receive = _function_body(js, "receiveChunk")
+    # A live chunk whose start has already passed switches the take to refill.
+    assert re.search(r'player\.state\s*=\s*"refill"', receive)
+    assert re.search(r"player\.end\s*<\s*player\.ctx\.currentTime", receive)
+    # At done, the rest is one block from the later of the end and now.
+    finish = _function_body(js, "finishStream")
+    assert re.search(r"concatSamples\(\s*player\.pending\s*\)", finish)
+    assert re.search(
+        r"Math\.max\(\s*player\.end,\s*player\.ctx\.currentTime\s*\)", finish
+    )
+    # The done event runs it.
+    assert "finishStream(player)" in _function_body(js, "runSpeechStreaming")
+
+
 def test_page_fallback_no_readable_stream():
     """Without a readable fetch body the page sends no stream_format.
 
