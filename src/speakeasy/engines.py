@@ -21,6 +21,7 @@ import re
 import tempfile
 import threading
 import time
+from collections.abc import Iterator
 from dataclasses import dataclass, field
 
 import numpy as np
@@ -215,6 +216,25 @@ class ReverbEngine:
             audio = self._tts.generate(text, voice, language, seed=seed, speed=speed)
         return audio, time.monotonic() - t0
 
+    def synthesize_streaming(
+        self,
+        text: str,
+        voice,
+        language: str,
+        *,
+        seed: int | None = None,
+        speed: float = 1.0,
+    ) -> Iterator[np.ndarray]:
+        """The finished take as one chunk: `reverb_tts` has no streaming entry.
+
+        Takes what `synthesize` takes and generates the whole take under the
+        engine lock, exactly as `synthesize` does; the single chunk is handed
+        over once it is ready. That is the documented behaviour of this engine,
+        not an error.
+        """
+        audio, _ = self.synthesize(text, voice, language, seed=seed, speed=speed)
+        yield audio
+
 
 class BadTake(Exception):
     """A take the library itself would call bad: too much audio per text token."""
@@ -274,12 +294,89 @@ class VoxCPM2Engine:
     ) -> tuple[np.ndarray, float]:
         """float32 samples at `sample_rate`, and the seconds it took.
 
+        Raises `BadTake` when the take carries six audio patches or more per
+        text token.
+        """
+        call = self._take_call(
+            text, reference=reference, prompt_text=prompt_text, cfg=cfg
+        )
+
+        with self._lock:
+            if seed is not None:
+                self._torch.manual_seed(seed)
+            t0 = time.monotonic()
+            audio = self._model.generate(**call)
+            elapsed = time.monotonic() - t0
+            tokens = len(self._model.tts_model.text_tokenizer(_flatten_text(text)))
+
+        audio = np.asarray(audio, dtype=np.float32)
+        self._reject_bad_take(len(audio), tokens)
+        return audio, elapsed
+
+    def generate_streaming(
+        self,
+        text: str,
+        *,
+        reference: str | None = None,
+        prompt_text: str | None = None,
+        cfg: float = 2.0,
+        seed: int | None = None,
+    ) -> Iterator[np.ndarray]:
+        """float32 chunks of the take, yielded as the library produces them.
+
+        Takes what `synthesize` takes and holds the same lock across the whole
+        generation, so chunk N reaches the caller as soon as the library has
+        made it instead of after the finished take. The bad-take bound is
+        applied once the take is complete, because it needs the finished length.
+        """
+        call = self._take_call(
+            text, reference=reference, prompt_text=prompt_text, cfg=cfg
+        )
+        with self._lock:
+            if seed is not None:
+                self._torch.manual_seed(seed)
+            samples = 0
+            for chunk in self._model.generate_streaming(**call):
+                chunk = np.asarray(chunk, dtype=np.float32)
+                samples += len(chunk)
+                yield chunk
+            tokens = len(self._model.tts_model.text_tokenizer(_flatten_text(text)))
+        self._reject_bad_take(samples, tokens)
+
+    def synthesize_streaming(
+        self,
+        text: str,
+        *,
+        reference: str | None = None,
+        prompt_text: str | None = None,
+        cfg: float = 2.0,
+        seed: int | None = None,
+    ) -> Iterator[np.ndarray]:
+        """The streaming take under the name every engine answers to.
+
+        VoxCPM2 yields the library's chunks; an engine whose library cannot
+        stream yields the finished take as a single chunk. Callers that do not
+        care which engine they hold call this.
+        """
+        yield from self.generate_streaming(
+            text, reference=reference, prompt_text=prompt_text, cfg=cfg, seed=seed
+        )
+
+    def _take_call(
+        self,
+        text: str,
+        *,
+        reference: str | None,
+        prompt_text: str | None,
+        cfg: float,
+    ) -> dict:
+        """The library arguments one take is generated with: both paths use these.
+
         The reference goes in as both reference audio (`reference_wav_path`) and
         continuation audio (`prompt_wav_path` with its `prompt_text`) when its
         transcript is known, so the reference is isolated behind its own tokens
         while the prompt audio continues in context. Without a transcript it goes
-        in as voice cloning (`reference_wav_path`) alone. Raises `BadTake` when
-        the take carries six audio patches or more per text token.
+        in as voice cloning (`reference_wav_path`) alone.
         """
         call = {
             "text": text,
@@ -296,20 +393,13 @@ class VoxCPM2Engine:
             if prompt_text is not None:
                 call["prompt_wav_path"] = reference
                 call["prompt_text"] = prompt_text
+        return call
 
-        with self._lock:
-            if seed is not None:
-                self._torch.manual_seed(seed)
-            t0 = time.monotonic()
-            audio = self._model.generate(**call)
-            elapsed = time.monotonic() - t0
-            tokens = len(self._model.tts_model.text_tokenizer(_flatten_text(text)))
-
-        audio = np.asarray(audio, dtype=np.float32)
-        patches = math.floor(len(audio) / self.sample_rate / self.PATCH_SECONDS)
+    def _reject_bad_take(self, samples: int, tokens: int) -> None:
+        """A take with six audio patches or more per text token is refused."""
+        patches = math.floor(samples / self.sample_rate / self.PATCH_SECONDS)
         if patches >= self.BAD_TAKE_RATIO * tokens:
             raise BadTake(f"take is {patches} audio patches for {tokens} text tokens")
-        return audio, elapsed
 
     def unload(self) -> None:
         """Drop the model and release its memory; the caller holds the TTS lock."""
