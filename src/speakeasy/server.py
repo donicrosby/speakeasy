@@ -907,6 +907,7 @@ def _stream_reverb(req: SpeechRequest) -> Response:
 
 
 def _reverb_stream_error() -> Response:
+    log.error("reverb-tts streaming failed")
     return JSONResponse(
         status_code=500,
         content={"error": {"message": "reverb-tts failed to generate speech"}},
