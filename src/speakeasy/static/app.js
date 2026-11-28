@@ -770,7 +770,9 @@ function init() {
   wireListen();
   wireSpeak();
   wireClone();
-  wireRecording("listen", (captured) => runTranscription(captured.blob));
+  wireRecording("listen", (captured) =>
+    runTranscription(captured.blob, captured.duration),
+  );
   wireRecording("clone", null);
 
   refreshStatus();

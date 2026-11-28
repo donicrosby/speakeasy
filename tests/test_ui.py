@@ -457,3 +457,14 @@ def test_listen_sends_whisper_for_long():
     # the choice is made from the recording's duration.
     assert '"whisper-1"' in body
     assert re.search(r"\bduration\b", body)
+
+
+def test_listen_recording_passes_its_duration():
+    # The microphone path must hand over the duration it already has. Without
+    # it the split reads undefined and every mic recording goes to Whisper.
+    body = _function_body(_read("app.js"), "init")
+    assert re.search(
+        r'wireRecording\(\s*"listen"\s*,\s*\(captured\)\s*=>\s*'
+        r"runTranscription\(\s*captured\.blob\s*,\s*captured\.duration\s*\)",
+        body,
+    )
