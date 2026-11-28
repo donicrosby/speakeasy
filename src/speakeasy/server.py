@@ -691,6 +691,11 @@ class _StreamBuffer:
             self._terminal = ("response", response)
             self._cond.notify_all()
 
+    def settled(self) -> bool:
+        """True once a terminal item has been published."""
+        with self._cond:
+            return self._terminal is not None
+
     def get(self) -> tuple[str, object]:
         """Block for the next item: a chunk, or the terminal."""
         with self._cond:
@@ -1106,6 +1111,19 @@ def _speech_response(
     )
 
 
+def _stream_failed_response() -> Response:
+    """The 500 for a generation that died before its first chunk.
+
+    The `on_error` mapper builds the ordinary per-engine response; this is the
+    guard's answer for a failure the mapper never saw (a `BaseException`, or a
+    mapper that raised). Its text is fixed, like every pre- or mid-stream message.
+    """
+    return JSONResponse(
+        status_code=500,
+        content={"error": {"message": "speech generation failed"}},
+    )
+
+
 def _stream_response(req: SpeechRequest, plan: _StreamPlan) -> Response:
     """Run one streaming generation behind a bounded buffer and build the reply.
 
@@ -1167,6 +1185,17 @@ def _stream_response(req: SpeechRequest, plan: _StreamPlan) -> Response:
                     stream.close()
                 except Exception:  # noqa: BLE001 — closing is best effort
                     log.error("closing the speech stream failed")
+            # Every path above publishes exactly one terminal item, and the
+            # handler's wait has no timeout of its own. A `BaseException`
+            # in the engine, or an `on_error` mapper that raised, ends this
+            # thread with none — the handler would then block on `buffer.get()`
+            # forever with nothing in the log. Publish one here so it cannot.
+            if not buffer.settled():
+                log.error("speech generation ended without a terminal item")
+                if started:
+                    buffer.fail(STREAM_ERROR_MESSAGE)
+                else:
+                    buffer.stop_with(_stream_failed_response())
 
     threading.Thread(target=generate, name="speech-stream", daemon=True).start()
 
