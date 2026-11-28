@@ -54,7 +54,7 @@ A `model` value that is neither a listed transcription id nor a case covered by 
 
 ### T5. Duration auto-route goes, with what served it
 
-The only trigger of the duration auto-route at server.py:1102-1106 (`not model and duration is not None and duration ≤ settings.fast_path_max_seconds`) was the empty `model`. The `probe_duration` call at server.py:1097 is removed from the transcription route because the engines report duration themselves (both result objects carry `duration`: engines.py:97 and engines.py:144). `probe_duration` (`engines.py:321`) has no other caller at `main` `301cf43` — its only occurrences are the definition, the import at server.py:52 and the call at server.py:1097 (F11) — so the import is also removed. `fast_path_max_seconds` is removed from `config.py:22`, from `README.md` (the routing text at line 296 and the env-table row at line 363), and from `README.docker.md` (the env-table row at line 146). **Check:** the setting is absent from the config test's field-enumeration assertion in `tests/test_config.py`.
+The only trigger of the duration auto-route at server.py:1102-1106 (`not model and duration is not None and duration ≤ settings.fast_path_max_seconds`) was the empty `model`. The `probe_duration` call at server.py:1097 is removed from the transcription route because the engines report duration themselves (both result objects carry `duration`: engines.py:97 and engines.py:144). `probe_duration` (`engines.py:321`) has no other caller at `main` `301cf43` — its only occurrences are the definition, the import at server.py:52 and the call at server.py:1097 (F11) — so the import is also removed and the definition is deleted. `fast_path_max_seconds` is removed from `config.py:22`, from `README.md` (the routing text at line 296 and the env-table row at line 363), and from `README.docker.md` (the env-table row at line 146). **Check:** the setting is absent from the config test's field-enumeration assertion in `tests/test_config.py`.
 
 ### T6. Availability mirrors the TTS rule
 
@@ -64,7 +64,7 @@ Today a Moonshine load failure at server.py:138-141 sets `moonshine = None` with
 
 ### T7. The page names its model and keeps today's split
 
-`runTranscription` (app.js:303-323) sends `moonshine-base` when the recording is ≤10 s and `whisper-1` otherwise. Ten seconds is a page constant. No selector. The page already knows the recording's duration before sending (app.js:331 VERIFIED: `wav.duration` is logged). For a 3 s recording it sends `model=moonshine-base`; for a 20 s recording it sends `model=whisper-1`. **Check:** pinned in `tests/test_ui.py` as source-text assertions on the `runTranscription` function body.
+`runTranscription` (app.js:303-323) sends `moonshine-base` when the recording is ≤10 s and `whisper-1` otherwise. Ten seconds is a page constant. No selector. The page already knows the recording's duration before sending (app.js:331 VERIFIED: `wav.duration` is logged). For a 3 s recording it sends `model=moonshine-base`; for a 20 s recording it sends `model=whisper-1`. **Check:** pinned in `tests/test_ui.py` as source-text assertions on the `runTranscription` function body and on its microphone call site in `init`, which must pass `captured.duration`.
 
 ### T8. Docs and scripts
 
@@ -117,10 +117,7 @@ Each fact is marked `VERIFIED` with its source at `main` `301cf43`. Facts from t
 ```json
 {"detail": [{"type": "missing", "loc": ["body", "model"], "msg": "Field required", "input": null}]}
 ```
-When `model` is present but empty:
-```json
-{"detail": [{"type": "string_too_short", "loc": ["body", "model"], "msg": "String should have at least 1 character", "input": "", "ctx": {"min_length": 1}}]}
-```
+When `model` is present but empty, the same body comes back (measured): on this stack an empty form value reports `type: "missing"` exactly like an absent one.
 
 **404 — Unlisted model (T2):**
 ```json
@@ -152,7 +149,7 @@ The known-id list names only transcription ids; TTS ids are not repeated. The ec
 
 Before the change (current): `["large-v3-turbo", "moonshine-base", "reverb-tts", "voxcpm2"]` (when both STT engines loaded and both TTS engines enabled; TTS ids listed by configuration, STT ids by load state).
 
-After the change: `["whisper-1", "large-v3-turbo", "moonshine-base", "reverb-tts", "voxcpm2"]` — transcription ids listed by configuration (always), TTS ids listed by configuration (unchanged). When `SPEAKEASY_MOONSHINE_ENABLED=false`, `moonshine-base` is absent. When `SPEAKEASY_WHISPER_MODEL=whisper-1`, the list is `["whisper-1", "reverb-tts", "voxcpm2"]`.
+After the change: `["whisper-1", "large-v3-turbo", "moonshine-base", "reverb-tts", "voxcpm2"]` — transcription ids listed by configuration (always), TTS ids listed by configuration (unchanged). When `SPEAKEASY_MOONSHINE_ENABLED=false`, `moonshine-base` is absent. When `SPEAKEASY_WHISPER_MODEL=whisper-1`, the list is `["whisper-1", "moonshine-base", "reverb-tts", "voxcpm2"]` — `moonshine-base` stays listed while `SPEAKEASY_MOONSHINE_ENABLED` is true.
 
 ## 6. State table
 
@@ -204,7 +201,7 @@ No other path picks an engine implicitly. After the change every 200 request rea
 - For a recording of **3 s** (≤10 s): sends `FormData` with `file` and `model=moonshine-base`.
 - For a recording of **20 s** (>10 s): sends `FormData` with `file` and `model=whisper-1`.
 
-The split threshold is a page constant, `LISTEN_MOONSHINE_MAX_SECONDS = 10`. The duration is read from `wav.duration` before the `FormData` is built (app.js:331 VERIFIED); no second probe is needed.
+The split threshold is a page constant, `LISTEN_MOONSHINE_MAX_SECONDS = 10`. The duration is read from `wav.duration` before the `FormData` is built (app.js:331 VERIFIED); no second probe is needed. The microphone path passes the duration `recordWav` already returned (`captured.duration`); the file path uses `wav.duration`.
 
 ### Error display
 
@@ -305,6 +302,9 @@ Every scenario runs without a GPU. Each names the test file and test function.
 
 ### Scenario: page sends model for long recording
 **Given** the shipped `app.js` source. **When** `runTranscription` builds its `FormData`. **Then** for a >10 s recording it includes `model=whisper-1`. **Test:** `test_listen_sends_whisper_for_long` (`tests/test_ui.py`).
+
+### Scenario: microphone path passes the recording's duration
+**Given** the shipped `app.js` source. **When** the Listen panel's microphone callback runs. **Then** it calls `runTranscription(captured.blob, captured.duration)`. **Test:** `test_listen_recording_passes_its_duration` (`tests/test_ui.py`).
 
 ## 12. Slices
 
