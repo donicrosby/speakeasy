@@ -300,13 +300,22 @@ function wireRecording(panel, onCapture) {
 
 // --- Listen ------------------------------------------------------------------
 
-async function runTranscription(blob) {
+// Recordings at or under this length use the fast Moonshine model; longer ones
+// use Whisper. The server has no default model, so the page names one.
+const LISTEN_MOONSHINE_MAX_SECONDS = 10;
+
+async function runTranscription(blob, duration) {
   const errEl = $("listen-error");
   clearError(errEl);
   const stateEl = $("listen-state");
   stateEl.textContent = MSG.working;
+  const model =
+    duration > 0 && duration <= LISTEN_MOONSHINE_MAX_SECONDS
+      ? "moonshine-base"
+      : "whisper-1";
   const form = new FormData();
   form.append("file", blob, "audio.wav");
+  form.append("model", model);
   try {
     const response = await api("/v1/audio/transcriptions", { form: form, raw: true });
     const engine = response.headers.get("X-Speakeasy-Engine") || "?";
@@ -331,7 +340,7 @@ function wireListen() {
       const wav = await toWav(file);
       lastRecording = wav;
       $("listen-state").textContent = "captured " + wav.duration.toFixed(1) + " s";
-      await runTranscription(wav.blob);
+      await runTranscription(wav.blob, wav.duration);
     });
   });
 }
@@ -763,7 +772,9 @@ function init() {
   wireListen();
   wireSpeak();
   wireClone();
-  wireRecording("listen", (captured) => runTranscription(captured.blob));
+  wireRecording("listen", (captured) =>
+    runTranscription(captured.blob, captured.duration),
+  );
   wireRecording("clone", null);
 
   refreshStatus();

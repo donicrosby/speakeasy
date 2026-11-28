@@ -434,3 +434,49 @@ def test_engine_selector_hides_voxcpm2_when_disabled():
     # The rule is applied to what `/health/ready` reports.
     status = _function_body(js, "refreshStatus")
     assert "applyEngineAvailability(body.voxcpm2" in status
+
+
+# --- the listen request names its model ----------------------------------
+
+
+def test_listen_sends_moonshine_for_short():
+    js = _read("app.js")
+    assert re.search(r"LISTEN_MOONSHINE_MAX_SECONDS\s*=\s*10\b", js)
+    body = _function_body(js, "runTranscription")
+    # The listen request carries the model, and the short arm is Moonshine.
+    assert re.search(r'form\.append\(\s*"model"\s*,', body)
+    assert re.search(
+        r'LISTEN_MOONSHINE_MAX_SECONDS\s*\?\s*"moonshine-base"\s*:\s*"whisper-1"',
+        body,
+    )
+
+
+def test_listen_sends_whisper_for_long():
+    body = _function_body(_read("app.js"), "runTranscription")
+    # The same expression's other arm sends the long recording to Whisper, and
+    # the choice is made from the recording's duration.
+    assert '"whisper-1"' in body
+    assert re.search(r"\bduration\b", body)
+
+
+def test_listen_recording_passes_its_duration():
+    # The microphone path must hand over the duration it already has. Without
+    # it the split reads undefined and every mic recording goes to Whisper.
+    body = _function_body(_read("app.js"), "init")
+    assert re.search(
+        r'wireRecording\(\s*"listen"\s*,\s*\(captured\)\s*=>\s*'
+        r"runTranscription\(\s*captured\.blob\s*,\s*captured\.duration\s*\)",
+        body,
+    )
+
+
+def test_listen_split_treats_unknown_duration_as_long():
+    # `toWav` reports duration 0 when WebAudio cannot decode the upload; the raw
+    # bytes still go to the server, which finds no duration either. An unknown
+    # length is not a short one, so the split must select Whisper for it, as the
+    # old server-side probe did when it knew nothing.
+    body = _function_body(_read("app.js"), "runTranscription")
+    assert re.search(
+        r"duration\s*>\s*0\s*&&\s*duration\s*<=\s*LISTEN_MOONSHINE_MAX_SECONDS",
+        body,
+    )

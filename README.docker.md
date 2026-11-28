@@ -143,7 +143,6 @@ application defaults; the Dockerfiles additionally set
 | `SPEAKEASY_COMPUTE_TYPE` | `auto` | `auto` \| `float16` \| `int8` \| `int8_float16` |
 | `SPEAKEASY_MOONSHINE_ENABLED` | `true` | Enable the Moonshine fast path for short audio |
 | `SPEAKEASY_MOONSHINE_MODEL` | `UsefulSensors/moonshine-base` | Moonshine model id |
-| `SPEAKEASY_FAST_PATH_MAX_SECONDS` | `10.0` | Audio shorter than this may use Moonshine |
 | `SPEAKEASY_BEAM_SIZE` | `5` | Whisper beam size |
 | `SPEAKEASY_VAD_FILTER` | `true` | Enable Silero VAD filtering |
 | `SPEAKEASY_HF_HOME` | unset (image: `/models`) | Hugging Face cache directory — persist this |

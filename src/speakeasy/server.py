@@ -49,7 +49,6 @@ from .engines import (
     ReverbEngine,
     VoxCPM2Engine,
     WhisperEngine,
-    probe_duration,
 )
 from .responses import FORMATS
 from .voices import ReferenceVoiceStore, VoiceStore, check_voice_id
@@ -82,6 +81,10 @@ whisper: WhisperEngine | None = None
 moonshine: MoonshineEngine | None = None
 resolved_device = "unknown"
 startup_error: str | None = None
+# Why Moonshine is missing when it is configured but failed to load: a request
+# naming Moonshine answers 503 with this string. None while it is loaded or
+# disabled.
+moonshine_error: str | None = None
 
 # TTS (Reverb) — loaded on a background thread after Whisper so readiness never
 # waits on it. `disabled | loading | ready | error`; `tts_error` is logged only,
@@ -110,7 +113,7 @@ VOXCPM2_TIMER_INTERVAL = 15.0  # seconds between idle-unload ticks
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    global whisper, moonshine, resolved_device, startup_error
+    global whisper, moonshine, resolved_device, startup_error, moonshine_error
 
     device, compute = resolve_device_compute(settings)
     resolved_device = device
@@ -136,7 +139,9 @@ async def lifespan(app: FastAPI):
                 settings.moonshine_model,
             )
         except Exception as e:
-            # Fast path is optional — log and continue
+            # Fast path is optional — log and continue, but remember why so a
+            # request that names Moonshine can answer with the reason.
+            moonshine_error = f"moonshine failed to load: {e}"
             log.warning("moonshine failed to load, fast path disabled: %s", e)
             moonshine = None
 
@@ -419,14 +424,18 @@ async def list_models():
 
 
 def _model_ids() -> list[str]:
-    ids = []
-    if whisper is not None:
-        ids.append(settings.whisper_model)
-    if moonshine is not None:
-        ids.append("moonshine-base")
-    # TTS engines are listed by configuration, not load state: a listed engine
+    # Every id is listed by configuration, never by load state: a listed engine
     # that is not ready answers its own 503, so its name must exist from startup.
-    ids += _listed_tts_engines()
+    return _listed_transcription_models() + _listed_tts_engines()
+
+
+def _listed_transcription_models() -> list[str]:
+    """The transcription model ids this deployment offers, from configuration."""
+    ids = ["whisper-1"]  # OpenAI's name; always listed and always selects Whisper
+    if settings.whisper_model != "whisper-1":
+        ids.append(settings.whisper_model)
+    if settings.moonshine_enabled:
+        ids.append("moonshine-base")
     return ids
 
 
@@ -443,20 +452,21 @@ def _listed_tts_engines() -> list[str]:
 MODEL_ECHO_CHARS = 64
 
 
-def _unknown_model_404(model: str) -> JSONResponse:
+def _unknown_model_404(model: str, known: list[str] | None = None) -> JSONResponse:
     """404 for a `model` value this deployment does not list.
 
     The echoed value is bounded: an unlisted name may be arbitrarily long (a
     voice string pasted into the wrong field), so only its first characters are
-    quoted back.
+    quoted back. `known` defaults to the TTS engine ids; the transcription route
+    passes its own listing.
     """
     echo = model[:MODEL_ECHO_CHARS]
     if len(model) > MODEL_ECHO_CHARS:
         echo += "..."
-    known = ", ".join(_listed_tts_engines())
+    known_ids = ", ".join(known if known is not None else _listed_tts_engines())
     return JSONResponse(
         status_code=404,
-        content={"error": {"message": f"unknown model '{echo}'. Known: {known}"}},
+        content={"error": {"message": f"unknown model '{echo}'. Known: {known_ids}"}},
     )
 
 
@@ -1060,23 +1070,34 @@ def delete_voice(voice_id: str):
 @app.post("/v1/audio/transcriptions", dependencies=[Depends(require_auth)])
 async def transcribe(
     file: UploadFile = File(...),
-    model: str = Form(default=""),
+    model: str = Form(..., min_length=1),
     language: str | None = Form(default=None),
     response_format: str = Form(default="json"),
     temperature: float = Form(default=0.0),
     fast: bool = Query(
-        default=False, description="Force Moonshine fast path (short English audio)"
+        default=False,
+        description="Moonshine fast path; only valid with model=moonshine-base",
     ),
     vad: bool = Query(default=True, description="Silero VAD filter (whisper only)"),
     word_timestamps: bool = Query(
         default=False, description="Word-level timestamps (whisper only)"
     ),
 ):
-    if whisper is None:
-        return JSONResponse(
-            status_code=503,
-            content={"error": {"message": startup_error or "models not loaded"}},
-        )
+    # `model` is required (422, from the Form annotation) and must name a model
+    # this deployment lists (404). Both run before any engine state is read,
+    # before any lock, and before anything is written to disk.
+    listed = _listed_transcription_models()
+    if model not in listed:
+        return _unknown_model_404(model, listed)
+    # No silent redirect: a request reaches only the engine it names. `fast=true`
+    # is an explicit request for Moonshine, so it is only meaningful beside
+    # `moonshine-base`.
+    if fast and model != "moonshine-base":
+        return _bad_request("fast=true requires model=moonshine-base")
+    # Moonshine is English-only; asking for it in another language is an error,
+    # never a quiet fall back to Whisper.
+    if model == "moonshine-base" and language not in (None, "en"):
+        return _bad_request("moonshine supports only English (language unset or 'en')")
 
     if response_format not in FORMATS:
         return JSONResponse(
@@ -1088,23 +1109,23 @@ async def transcribe(
             },
         )
 
+    # Availability mirrors the listing: a configured engine that failed to load
+    # stays listed and answers 503 with its reason. Only the named engine's
+    # state is read — one engine failing never fails a request for the other.
+    if model == "moonshine-base":
+        if moonshine is None:
+            return JSONResponse(
+                status_code=503,
+                content={"error": {"message": moonshine_error or "models not loaded"}},
+            )
+    elif whisper is None:
+        return JSONResponse(
+            status_code=503,
+            content={"error": {"message": startup_error or "models not loaded"}},
+        )
+
     audio_bytes = await file.read()
     suffix = os.path.splitext(file.filename or "")[1] or ".wav"
-
-    # Route: explicit fast=true forces Moonshine regardless of duration;
-    # model=moonshine-base requests it by name; otherwise auto-route short
-    # audio when the client didn't pin a whisper model.
-    duration = probe_duration(audio_bytes)
-    moonshine_eligible = moonshine is not None and (language in (None, "en"))
-    use_moonshine = moonshine_eligible and (
-        fast
-        or model == "moonshine-base"
-        or (
-            not model
-            and duration is not None
-            and duration <= settings.fast_path_max_seconds
-        )
-    )
 
     # Write once, reuse for whichever engine runs
     tmp = tempfile.NamedTemporaryFile(suffix=suffix, delete=False)
@@ -1112,7 +1133,7 @@ async def transcribe(
         tmp.write(audio_bytes)
         tmp.close()
 
-        if use_moonshine:
+        if model == "moonshine-base":
             result = moonshine.transcribe(tmp.name)
         else:
             result = whisper.transcribe(
@@ -1124,7 +1145,7 @@ async def transcribe(
     finally:
         os.unlink(tmp.name)
 
-    result.duration = result.duration or duration or 0.0
+    result.duration = result.duration or 0.0
 
     formatter, media_type = FORMATS[response_format]
     body = formatter(result)
