@@ -1,12 +1,13 @@
 # Speakeasy: transcription has no default model
 
-> Spec v1.1. Validated against `main` `301cf43`. Changes the contract of `POST /v1/audio/transcriptions`. Does not touch TTS routes.
+> Spec v1.2. Validated against `main` `301cf43`. Changes the contract of `POST /v1/audio/transcriptions`. Does not touch TTS routes.
+> v1.2: the transcription times in section 13 are now measured figures, and references to the planning brief are removed so the spec stands alone. No ruling changed.
 
 ## 1. Goals and non-goals
 
 ### Goals
 
-**Transcription has no default model** (brief §1 piece b, owner decision D2). The `model` field on `POST /v1/audio/transcriptions` is required, must be a listed transcription model id, and no request is ever routed to an engine it did not name. The same rule the owner gave for speech in the previous lane.
+**Transcription has no default model** (owner decision D2). The `model` field on `POST /v1/audio/transcriptions` is required, must be a listed transcription model id, and no request is ever routed to an engine it did not name. The same rule the owner gave for speech in the previous lane.
 
 ### Non-goals
 
@@ -14,7 +15,7 @@ Changing what an engine transcribes or its accuracy. New engines or models. New 
 
 ## 2. Owner's decision (D2)
 
-His message of 2026-11-27, verbatim (brief §2):
+His message of 2026-11-27, verbatim:
 
 > Fix the README, yes no default model, yes to streaming endpoint, 10 step default is probably better.
 
@@ -76,9 +77,9 @@ A new file, `docs/specs/transcription-no-default-model.md` (this file). The two 
 
 ## 4. Verified facts
 
-Each fact is marked `VERIFIED` with its source at `main` `301cf43`. Facts from the brief are re-read and cited here.
+Each fact is marked `VERIFIED` with its source at `main` `301cf43`.
 
-- **F1** `VERIFIED` — `main` is `301cf43`; 310 tests pass in both environments (brief §3, tested in fresh worktree).
+- **F1** `VERIFIED` — `main` is `301cf43`; 310 tests pass in both environments (tested in a fresh worktree).
 - **F3** `VERIFIED` — `POST /v1/audio/transcriptions` signature: server.py:1060-1074. Takes `file`, `model: str = Form(default="")`, `language`, `response_format`, `temperature`, and query flags `fast`, `vad`, `word_timestamps`.
 - **F4** `VERIFIED` — Routing at server.py:1095-1107. Moonshine used when eligible (`language` unset or `en`) and any of: `fast` is true; `model == "moonshine-base"`; or `model` is empty and duration ≤ `settings.fast_path_max_seconds`. Otherwise Whisper.
 - **F5** `VERIFIED` — Two silent redirects from F4: `fast=true` overrides a `model` that names Whisper (1099-1100); `model=moonshine-base` with non-`en` language quietly runs Whisper (1098-1101). A third: empty `model` with a short clip → Moonshine (1102-1106); any other `model` value → Whisper (1107).
@@ -323,10 +324,17 @@ One coder slice: `feat/transcription-no-default-model`.
 
 ## 13. Risks and open questions
 
-Carried from brief §10 items 4 to 6.
+Each was settled while the spec was designed. The owner may overrule any of them.
 
-1. **`whisper-1` and the configured name both listed (T3).** Settled by the orchestrator (brief §10.4). The owner may overrule after reading the report. Not open for the coder.
+1. **`whisper-1` and the configured name both listed (T3).** Settled while the spec was designed. The owner may overrule. Not open for the coder.
 
-2. **The page's ten-second split (T7).** The owner may prefer always Whisper. The cost of always Whisper: a 20 s clip takes ~2-3 s on GPU, ~8-15 s on CPU; with Moonshine the short path is ~0.3 s on CPU. The cost of always Moonshine on short clips: no punctuation. The current split preserves today's behaviour exactly — the server's former default of 10 s is now a page constant. **Settled by ruling T7** (the orchestrator); the owner may overrule and prefer always Whisper (brief §10.5); the coder builds the split as ruled.
+2. **The page's ten-second split (T7).** The owner may prefer always Whisper. The cost depends on whether the host has a GPU for Whisper. Measured on 2026-11-28, per call, time reported by the server:
 
-3. **Callers that relied on the empty default (brief §10.6).** Unknown outside this repository. The README's migration note is the mitigation. **Settled by the owner** — he knows his callers and issued ruling D2 with this consequence known.
+| Host | 2.8 s clip, `whisper-1` | 2.8 s clip, `moonshine-base` | 16.9 s clip, `whisper-1` | 16.9 s clip, `moonshine-base` |
+|---|---|---|---|---|
+| `rocm` image on an AMD gfx1151 iGPU (Whisper on the GPU, Moonshine on the CPU), host shared with other GPU workloads | 1.4 to 2.6 s (median 2.4 s) | 1.1 to 2.2 s (median 1.6 s) | 3.1 to 5.1 s (median 4.0 s) | 3.5 to 5.7 s (median 5.5 s) |
+| `cuda` image with no GPU, CPU only, load average 14 to 16 | 10.4 to 11.9 s (median 10.8 s) | 0.48 to 0.54 s (median 0.51 s) | 11.4 to 12.3 s (median 11.6 s) | 1.8 to 2.0 s (median 1.9 s) |
+
+These are figures from one 32-core host, not a benchmark; they will differ elsewhere. The first call after start also pays the model load (about 10 s for Moonshine). On CPU, Whisper takes nearly the same time for both lengths, which is consistent with its encoder always processing a 30-second window. On the shared host, single calls occasionally took about 10 s: four of about thirty Whisper calls on the GPU, in which both of its GPU stages ran six to nine times slower for about thirty seconds and then returned to normal, and one of about twenty-five warm Moonshine calls. The cause was not established. The cost of always Moonshine on short clips: no punctuation. The current split preserves today's behaviour exactly — the server's former default of 10 s is now a page constant. **Settled by ruling T7**; the owner may overrule and prefer always Whisper; the coder builds the split as ruled.
+
+3. **Callers that relied on the empty default.** Unknown outside this repository. The README's migration note is the mitigation. **Settled by the owner** — he knows his callers and issued ruling D2 with this consequence known.
