@@ -515,6 +515,27 @@ def _speech(client, **payload):
     return client.post("/v1/audio/speech", json=payload)
 
 
+def _speech_bounded(client, **payload):
+    """`_speech` in a side thread: a lost terminal item fails, never stalls.
+
+    The handler waits for the generating thread's terminal item with no
+    timeout of its own. A regression in that guarantee would block this test
+    for ever, so the join bound turns the stall into a failed assertion.
+    """
+    result = {}
+
+    def run():
+        result["r"] = _speech(client, **payload)
+
+    thread = threading.Thread(target=run, name="handler-thread")
+    thread.start()
+    thread.join(10)
+    assert not thread.is_alive(), (
+        "the handler hung waiting for the stream's terminal item"
+    )
+    return result["r"]
+
+
 def _sse_events(body: bytes) -> list[dict]:
     events = []
     for line in body.decode().splitlines():
@@ -861,7 +882,7 @@ def test_generation_dying_after_a_chunk_ends_the_stream(client, monkeypatch, cap
     monkeypatch.setattr(server, "voxcpm2_store", None)
 
     with caplog.at_level(logging.ERROR, logger="speakeasy"):
-        r = _speech(
+        r = _speech_bounded(
             client,
             model="voxcpm2",
             input="Hi",
@@ -893,7 +914,7 @@ def test_generation_dying_before_a_chunk_answers_a_500(client, monkeypatch, capl
     monkeypatch.setattr(server, "voxcpm2_store", None)
 
     with caplog.at_level(logging.ERROR, logger="speakeasy"):
-        r = _speech(
+        r = _speech_bounded(
             client,
             model="voxcpm2",
             input="Hi",
@@ -921,7 +942,7 @@ def test_raising_error_mapper_leaves_the_guard_to_answer(client, monkeypatch, ca
     monkeypatch.setattr(server, "_voxcpm2_stream_error", explode)
 
     with caplog.at_level(logging.ERROR, logger="speakeasy"):
-        r = _speech(
+        r = _speech_bounded(
             client,
             model="voxcpm2",
             input="Hi",
