@@ -401,8 +401,9 @@ waits until 1.5 seconds of audio has arrived. If that took no longer than 1.5
 seconds it plays from there, each chunk after the previous one. If it took
 longer, the page keeps receiving and plays the whole take when the stream ends.
 If live playback ever runs dry, it finishes receiving and plays the rest.
-VoxCPM2 generates about one second of audio per second of wall time, so on most
-hardware the page plays its takes whole. The finished take is always intact.
+VoxCPM2 generates about one second of audio per 1.05 seconds of wall time — a
+little slower than playback — so on most hardware the page plays its takes
+whole. The finished take is always intact.
 Reverb-TTS delivers a take as one piece, so for it the page behaves as before.
 
 ## Engine routing
