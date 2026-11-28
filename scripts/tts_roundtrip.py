@@ -54,7 +54,7 @@ READY_TIMEOUT = 120.0
 REQUEST_TIMEOUT = 300.0
 # Streaming: the fixed seed both takes share, and the take-equivalence rules.
 STREAM_SEED = 1234
-STREAM_TOLERANCE = 1e-5
+STREAM_TOLERANCE = 1 / 32768  # one step of the delivered 16-bit samples
 STREAM_DURATION_TOLERANCE = 0.01
 
 REVERB_ENGINE = "reverb-tts"
@@ -702,6 +702,11 @@ def _max_abs_diff(a, b) -> float:
     return max((abs(x - y) for x, y in zip(a, b)), default=0) / 32768.0
 
 
+def _same_take(a, b) -> bool:
+    """The equivalence rule: equal length, and no sample more than one step apart."""
+    return len(a) == len(b) and _max_abs_diff(a, b) <= STREAM_TOLERANCE
+
+
 def _read_sse(stream):
     """Yield the JSON object of each ``data:`` line of an event stream."""
     for raw in stream:
@@ -818,8 +823,8 @@ def stream_check(base, key, text, voice, speed, step, *, model, cfg=None):
     """The streamed take against the non-streaming take for the same request.
 
     Both are raw pcm for the same request and seed: the stream is the same take
-    to within float rounding — the same sample count, and no sample differing
-    by more than the documented tolerance.
+    to within float rounding: the same sample count, and no sample differing by more than one
+    step of the 16-bit format, the smallest difference a delivered sample can show.
     """
     streamed = stream_speech(
         base, key, text, voice, speed, f"{step}_events", model=model, cfg=cfg
@@ -855,7 +860,7 @@ def stream_check(base, key, text, voice, speed, step, *, model, cfg=None):
     streamed_samples = _pcm_samples(streamed)
     take_samples = _pcm_samples(body)
     diff = _max_abs_diff(streamed_samples, take_samples)
-    ok = len(streamed_samples) == len(take_samples) and diff <= STREAM_TOLERANCE
+    ok = _same_take(streamed_samples, take_samples)
     record = {
         "step": step,
         "ok": ok,
