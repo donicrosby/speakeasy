@@ -14,7 +14,9 @@ the ``cfg`` bounds — and, only when ``--idle-wait`` is given, the idle unload
 and the reload that follows it.
 
 One JSON line is printed per step; the exit code is 0 only when every step
-passes. The script uses the standard library only and is not installed.
+passes. With ``--stream`` it also checks streaming delivery: the event stream
+and its final statistics, and the streamed take against the non-streaming take.
+The script uses the standard library only and is not installed.
 
 Intended to run inside the GPU image (it is not installed) against the server
 it ships with::
@@ -29,6 +31,8 @@ The base URL and the API key come from arguments or the environment
 from __future__ import annotations
 
 import argparse
+import array
+import base64
 import difflib
 import json
 import os
@@ -48,6 +52,10 @@ SIMILARITY_MIN = 0.8
 SPEEDS = (0.5, 1.0, 2.0)
 READY_TIMEOUT = 120.0
 REQUEST_TIMEOUT = 300.0
+# Streaming: the fixed seed both takes share, and the take-equivalence rules.
+STREAM_SEED = 1234
+STREAM_TOLERANCE = 1e-5
+STREAM_DURATION_TOLERANCE = 0.01
 
 REVERB_ENGINE = "reverb-tts"
 VOXCPM2_ENGINE = "voxcpm2"
@@ -145,6 +153,8 @@ def _speech_payload(
     design=None,
     style=None,
     response_format="wav",
+    stream_format=None,
+    seed=None,
 ) -> bytes:
     """The speech JSON body; the VoxCPM2-only fields are added only when set."""
     payload = {
@@ -158,6 +168,8 @@ def _speech_payload(
         ("cfg", cfg),
         ("design", design),
         ("style", style),
+        ("stream_format", stream_format),
+        ("seed", seed),
     ):
         if value is not None:
             payload[field] = value
@@ -667,6 +679,214 @@ def voxcpm2_roundtrip(base, key, args) -> list[str]:
     return failures
 
 
+def _as_int(value):
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _pcm_samples(body: bytes):
+    """The signed 16-bit little-endian samples of a raw pcm body."""
+    samples = array.array("h")
+    samples.frombytes(body[: len(body) - (len(body) % 2)])
+    if sys.byteorder == "big":
+        samples.byteswap()
+    return samples
+
+
+def _max_abs_diff(a, b) -> float:
+    """The largest sample difference between two takes, on the ±1.0 scale."""
+    if len(a) != len(b):
+        return float("inf")
+    return max((abs(x - y) for x, y in zip(a, b)), default=0) / 32768.0
+
+
+def _read_sse(stream):
+    """Yield the JSON object of each ``data:`` line of an event stream."""
+    for raw in stream:
+        line = raw.decode("utf-8", "replace").strip()
+        if not line.startswith("data:"):
+            continue
+        payload = line[len("data:") :].strip()
+        if payload == "[DONE]":
+            raise ValueError("the stream ended with a data: [DONE] line")
+        yield json.loads(payload)
+
+
+def stream_speech(base, key, text, voice, speed, step, *, model, cfg=None):
+    """POST a speech request as server-sent events; return the decoded pcm.
+
+    Reads the events as they arrive and base64-decodes each delta. Checks the
+    stream carries at least one delta and one done event, no ``data: [DONE]``
+    line, and a reported duration that matches the decoded audio. Returns the
+    assembled raw pcm, or None on any failure (one JSON line either way).
+    """
+    payload = _speech_payload(
+        text,
+        voice,
+        speed,
+        model=model,
+        cfg=cfg,
+        response_format="pcm",
+        stream_format="sse",
+        seed=STREAM_SEED,
+    )
+    req = urllib.request.Request(base + "/v1/audio/speech", data=payload, method="POST")
+    req.add_header("Content-Type", "application/json")
+    if key:
+        req.add_header("Authorization", f"Bearer {key}")
+    chunks = bytearray()
+    usage = None
+    deltas = 0
+    rate = None
+    try:
+        with urllib.request.urlopen(req, timeout=REQUEST_TIMEOUT) as resp:
+            if resp.status != 200:
+                _emit(
+                    {
+                        "step": step,
+                        "ok": False,
+                        "status": resp.status,
+                        "error": _error_message(resp.read()),
+                    }
+                )
+                return None
+            rate = _as_int(_headers(resp.headers).get("x-speakeasy-sample-rate"))
+            for event in _read_sse(resp):
+                kind = event.get("type")
+                if kind == "speech.audio.delta":
+                    deltas += 1
+                    chunks += base64.b64decode(event.get("audio") or "")
+                elif kind == "speech.audio.done":
+                    usage = event.get("usage") or {}
+                elif kind == "error":
+                    _emit(
+                        {
+                            "step": step,
+                            "ok": False,
+                            "status": resp.status,
+                            "error": (event.get("error") or {}).get("message"),
+                        }
+                    )
+                    return None
+    except urllib.error.HTTPError as e:
+        _emit(
+            {
+                "step": step,
+                "ok": False,
+                "status": e.code,
+                "error": _error_message(e.read()),
+            }
+        )
+        return None
+    except ValueError as e:
+        _emit({"step": step, "ok": False, "status": 200, "error": str(e)})
+        return None
+
+    measured = (len(chunks) // 2) / rate if rate else None
+    record = {
+        "step": step,
+        "ok": True,
+        "status": 200,
+        "engine": model,
+        "deltas": deltas,
+        "sample_rate": rate,
+        "audio_seconds": round(measured, 3) if measured is not None else None,
+        "usage": usage,
+    }
+    if deltas < 1 or usage is None:
+        record["ok"] = False
+        record["error"] = "the stream is missing a delta or a done event"
+    else:
+        reported = _as_float(usage.get("audio_duration"))
+        if (
+            reported is None
+            or measured is None
+            or abs(reported - measured) > STREAM_DURATION_TOLERANCE
+        ):
+            record["ok"] = False
+            record["error"] = (
+                f"usage.audio_duration {reported} does not match the decoded "
+                f"{measured} s of audio"
+            )
+    _emit(record)
+    return bytes(chunks) if record["ok"] else None
+
+
+def stream_check(base, key, text, voice, speed, step, *, model, cfg=None):
+    """The streamed take against the non-streaming take for the same request.
+
+    Both are raw pcm for the same request and seed: the stream is the same take
+    to within float rounding — the same sample count, and no sample differing
+    by more than the documented tolerance.
+    """
+    streamed = stream_speech(
+        base, key, text, voice, speed, f"{step}_events", model=model, cfg=cfg
+    )
+    if streamed is None:
+        return False
+    status, body, _ = _request(
+        base,
+        "/v1/audio/speech",
+        key,
+        method="POST",
+        data=_speech_payload(
+            text,
+            voice,
+            speed,
+            model=model,
+            cfg=cfg,
+            response_format="pcm",
+            seed=STREAM_SEED,
+        ),
+        content_type="application/json",
+    )
+    if status != 200:
+        _emit(
+            {
+                "step": f"{step}_take",
+                "ok": False,
+                "status": status,
+                "error": _error_message(body),
+            }
+        )
+        return False
+    streamed_samples = _pcm_samples(streamed)
+    take_samples = _pcm_samples(body)
+    diff = _max_abs_diff(streamed_samples, take_samples)
+    ok = len(streamed_samples) == len(take_samples) and diff <= STREAM_TOLERANCE
+    record = {
+        "step": step,
+        "ok": ok,
+        "stream_samples": len(streamed_samples),
+        "take_samples": len(take_samples),
+        "max_abs_diff": diff,
+    }
+    if not ok:
+        record["error"] = "the streamed take differs from the non-streaming take"
+    _emit(record)
+    return ok
+
+
+def stream_roundtrip(base, key, args) -> list[str]:
+    """The streaming checks for the selected engine."""
+    if args.engine == VOXCPM2_ENGINE:
+        ok = stream_check(
+            base,
+            key,
+            LINE,
+            "default",
+            1.0,
+            "stream",
+            model=VOXCPM2_ENGINE,
+            cfg=args.cfg,
+        )
+    else:
+        ok = stream_check(base, key, LINE, PRESET, 1.0, "stream", model=REVERB_ENGINE)
+    return [] if ok else ["stream"]
+
+
 def parse_args(argv=None):
     parser = argparse.ArgumentParser(
         description="End-to-end TTS round trip against a running speakeasy server."
@@ -711,6 +931,14 @@ def parse_args(argv=None):
             "SPEAKEASY_TTS_VOXCPM_IDLE_SECONDS idle)"
         ),
     )
+    parser.add_argument(
+        "--stream",
+        action="store_true",
+        help=(
+            "also check streaming delivery: the event stream and its final "
+            "statistics, and the streamed take against the non-streaming take"
+        ),
+    )
     return parser.parse_args(argv)
 
 
@@ -724,6 +952,9 @@ def main(argv=None) -> int:
         failures = voxcpm2_roundtrip(base, key, args)
     else:
         failures = reverb_roundtrip(base, key, args)
+
+    if args.stream:
+        failures += stream_roundtrip(base, key, args)
 
     if failures:
         _emit({"step": "summary", "ok": False, "failed": failures})
