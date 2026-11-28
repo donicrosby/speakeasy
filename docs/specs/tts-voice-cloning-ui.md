@@ -129,6 +129,8 @@ All `/v1/*` endpoints require the bearer token (existing `require_auth`). `/heal
 | `language`         | `str` \| `null`                   | `null`                   | One of the 7 supported codes. Defaults to the voice's language. |
 | `seed`             | `int` \| `null`                   | `null`                   | Reproducible take when set; drawn randomly when null.        |
 
+> Streaming delivery is specified in `docs/specs/tts-streaming.md`.
+
 **Response 200:**
 
 - Body: the encoded audio bytes.
