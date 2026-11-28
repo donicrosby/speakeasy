@@ -350,6 +350,9 @@ function wireListen() {
 // The last Speak blob URL, revoked before the next one so the page does not
 // leak decoded audio for the lifetime of the tab.
 let speakUrl = null;
+// The one AudioContext a streaming take plays through; the next Speak replaces
+// it so contexts do not accumulate.
+let speakContext = null;
 
 function fillLanguages(languages) {
   for (const id of ["speak-language", "clone-language"]) {
@@ -507,7 +510,160 @@ function speechPayload(engine, text) {
   };
 }
 
-async function runSpeech(payload) {
+// --- Speak: stream the take as events, or ask for it whole -------------------
+
+// The speech stream's two events, and the header carrying the take's rate.
+const SSE_DELTA = "speech.audio.delta";
+const SSE_DONE = "speech.audio.done";
+const SAMPLE_RATE_HEADER = "X-Speakeasy-Sample-Rate";
+
+// The browser can play the take as it arrives only if it can read a fetch body
+// as it arrives, decode text, and run an AudioContext. Without all three the
+// page asks for the whole take, as it always has.
+function streamingAvailable() {
+  const AudioCtx = window.AudioContext || window.webkitAudioContext;
+  return (
+    typeof ReadableStream !== "undefined" &&
+    typeof TextDecoder !== "undefined" &&
+    typeof AudioCtx === "function"
+  );
+}
+
+// Today's body, plus the two fields that ask for the take as pcm events.
+function streamingPayload(payload) {
+  return Object.assign({}, payload, {
+    response_format: "pcm",
+    stream_format: "sse",
+  });
+}
+
+// One take's playback: a single AudioContext timeline, and every sample kept so
+// the finished take can be written as a WAV Blob for the download link.
+function newStreamPlayer(rate) {
+  const AudioCtx = window.AudioContext || window.webkitAudioContext;
+  if (speakContext) speakContext.close();
+  speakContext = new AudioCtx({ sampleRate: rate });
+  // Resuming needs the click that started the request; a rejected promise only
+  // means the take stays silent, so it is ignored.
+  if (speakContext.resume) speakContext.resume();
+  return { ctx: speakContext, rate: rate, samples: [], end: 0 };
+}
+
+// s16le bytes, base64, as the float samples Web Audio and the WAV writer take.
+function decodePcm(base64) {
+  const bytes = atob(base64);
+  const floats = new Float32Array(bytes.length / 2);
+  for (let i = 0; i < floats.length; i++) {
+    const low = bytes.charCodeAt(i * 2);
+    const high = bytes.charCodeAt(i * 2 + 1);
+    const sample = (high << 8) | low;
+    floats[i] = (sample >= 0x8000 ? sample - 0x10000 : sample) / 32768.0;
+  }
+  return floats;
+}
+
+// Schedule one chunk after the previous one, so the take plays unbroken.
+function scheduleChunk(player, floats) {
+  const buffer = player.ctx.createBuffer(1, floats.length, player.rate);
+  buffer.copyToChannel(floats, 0);
+  const source = player.ctx.createBufferSource();
+  source.buffer = buffer;
+  source.connect(player.ctx.destination);
+  if (player.end < player.ctx.currentTime) player.end = player.ctx.currentTime;
+  source.start(player.end);
+  player.end += buffer.duration;
+  player.samples.push(floats);
+}
+
+function concatSamples(chunks) {
+  let length = 0;
+  for (const chunk of chunks) length += chunk.length;
+  const all = new Float32Array(length);
+  let at = 0;
+  for (const chunk of chunks) {
+    all.set(chunk, at);
+    at += chunk.length;
+  }
+  return all;
+}
+
+// Read `data:` events off a fetch body as they arrive, one JSON object each.
+async function readEvents(response, onEvent) {
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  let pending = "";
+  for (;;) {
+    const { value, done } = await reader.read();
+    if (done) break;
+    pending += decoder.decode(value, { stream: true });
+    let split = pending.indexOf("\n\n");
+    while (split !== -1) {
+      const block = pending.slice(0, split).trim();
+      pending = pending.slice(split + 2);
+      if (block.startsWith("data:")) onEvent(JSON.parse(block.slice(5).trim()));
+      split = pending.indexOf("\n\n");
+    }
+  }
+}
+
+// Play the take as its events arrive, then hand the finished WAV to the player
+// and the download link and show the statistics the done event carried.
+async function runSpeechStreaming(payload) {
+  const response = await api("/v1/audio/speech", {
+    json: streamingPayload(payload),
+    raw: true,
+    engine: payload.model,
+  });
+  if (!response.body || !response.body.getReader) {
+    throw new Error(MSG.network);
+  }
+  const rate = Number(response.headers.get(SAMPLE_RATE_HEADER)) || 24000;
+  const player = newStreamPlayer(rate);
+  const download = $("speak-download");
+  download.hidden = true;
+  let firstAt = 0;
+  let ticker = null;
+  let usage = null;
+  const onEvent = (event) => {
+    if (event.type === SSE_DELTA) {
+      if (!firstAt) {
+        firstAt = Date.now();
+        ticker = window.setInterval(() => {
+          $("speak-meta").textContent =
+            "receiving… " + ((Date.now() - firstAt) / 1000).toFixed(1) + " s";
+        }, 250);
+      }
+      scheduleChunk(player, decodePcm(event.audio));
+    } else if (event.type === SSE_DONE) {
+      usage = event.usage;
+    } else if (event.type === "error") {
+      throw new Error((event.error && event.error.message) || MSG.ttsError);
+    }
+  };
+  try {
+    await readEvents(response, onEvent);
+  } finally {
+    if (ticker) window.clearInterval(ticker);
+  }
+  if (!usage) throw new Error(MSG.ttsError);
+  const blob = encodeWav(concatSamples(player.samples), player.rate);
+  const previous = speakUrl;
+  speakUrl = URL.createObjectURL(blob);
+  $("speak-audio").src = speakUrl;
+  download.href = speakUrl;
+  download.hidden = false;
+  if (previous) URL.revokeObjectURL(previous);
+  $("speak-meta").textContent =
+    usage.audio_duration +
+    " s · " +
+    usage.elapsed +
+    " s · " +
+    usage.rtf +
+    "x real time";
+}
+
+// Today's request, unchanged: the whole take in one response.
+async function runSpeechFallback(payload) {
   const response = await api("/v1/audio/speech", {
     json: payload,
     raw: true,
@@ -520,10 +676,18 @@ async function runSpeech(payload) {
   const previous = speakUrl;
   speakUrl = URL.createObjectURL(blob);
   $("speak-audio").src = speakUrl;
-  $("speak-download").href = speakUrl;
+  const download = $("speak-download");
+  download.href = speakUrl;
+  download.hidden = false;
   if (previous) URL.revokeObjectURL(previous);
   $("speak-meta").textContent =
     duration + " s · " + elapsed + " s · " + rtf + "x real time";
+}
+
+// Stream the take where the browser can, and ask for it whole otherwise.
+async function runSpeech(payload) {
+  if (streamingAvailable()) return runSpeechStreaming(payload);
+  return runSpeechFallback(payload);
 }
 
 async function speak() {
