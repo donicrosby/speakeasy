@@ -189,6 +189,8 @@ All `/v1/*` endpoints require the bearer token (existing `require_auth`). `/heal
 | `design`           | `str` \| `null`                   | `null`                   | Voice design description, 1 to 300 chars. For VoxCPM2 only; non-null on Reverb is 400.                | VoxCPM2 only  |
 | `style`            | `str` \| `null`                   | `null`                   | Style hint, 1 to 200 chars. For VoxCPM2 only; non-null on Reverb is 400.                              | VoxCPM2 only  |
 
+> Streaming delivery is specified in `docs/specs/tts-streaming.md`.
+
 **Validation rules (new fields, VoxCPM2-specific):**
 
 1. `cfg` outside 1.0 to 5.0 → 422 (Pydantic `Field(ge=1.0, le=5.0)`).
