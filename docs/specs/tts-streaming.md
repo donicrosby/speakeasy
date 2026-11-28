@@ -1,6 +1,7 @@
 # Speakeasy streaming speech
 
-> Spec v2.0. Validated against speakeasy `main` `301cf43`, the brief `brief-no-default-and-streaming.md` §5C with its addendum (rulings S12–S16), and OpenAI's published interface (OpenAPI spec `openai.yaml` on `master`, the Rust crate `async-openai`, and the reference page at `developers.openai.com`, all read 2026-11-27). Contracts: `docs/specs/tts-voice-cloning-ui.md` (Reverb) and `docs/specs/tts-voxcpm2-engine.md` (VoxCPM2) — this spec extends both and changes neither except for one cross-reference line each (S11).
+> Spec v2.1. Its facts were read at speakeasy `main` `301cf43`; `main` has since gained the transcription change (no default transcription model), which moves line numbers in the files cited and touches nothing this spec contracts. Validated against OpenAI's published interface (OpenAPI spec `openai.yaml` on `master`, the Rust crate `async-openai`, and the reference page at `developers.openai.com`, all read 2026-11-27). Contracts: `docs/specs/tts-voice-cloning-ui.md` (Reverb) and `docs/specs/tts-voxcpm2-engine.md` (VoxCPM2) — this spec extends both and changes neither except for one cross-reference line each (S11).
+> v2.1: references to the lane's planning notes and to files that live outside this repository are removed so the spec stands alone. No ruling changed.
 >
 > **Revision from v1.0:** S12–S16 from the addendum are carried in. Lock ownership rewritten (S12). Buffer cap is a hard stop, never a park (S13). Buffer bound recalculated from the true worst case (includes Reverb's `speed` factor). The page plays through Web Audio from `pcm` in SSE events (S14). `X-Speakeasy-Sample-Rate` on both streaming forms (S15). `data: [DONE]` and keepalive comments are withdrawn — the stream is exactly OpenAI's two events (S16). Citations ground the interface in real sources. The probe sink is defined. The equivalence pass rule is one rule. Slice attribution corrected. Reviewer mechanical corrections carried from the review branch.
 
@@ -8,21 +9,21 @@
 
 ### Goal
 
-Speech can be delivered as it is generated, for callers that want first audio sooner than the whole take (brief §1, piece (c)). A request without the new field behaves exactly as today, byte for byte (S1).
+Speech can be delivered as it is generated, for callers that want first audio sooner than the whole take. A request without the new field behaves exactly as today, byte for byte (S1).
 
 ### Non-goals
 
-- Streaming transcription (brief §5C, non-goals).
+- Streaming transcription.
 - Server-sent events on any route other than speech.
 - OpenAI's Realtime API.
 - HTTP trailers — behaviour through the owner's proxy is unverified (S5).
 - Changing what an engine generates or any non-streaming response.
 - New engines, new dependencies, any change to `pyproject.toml`, `uv.lock` or a Dockerfile (C1).
-- A nano-vLLM backend — the owner's decision is pending (brief §1, not a goal).
+- A nano-vLLM backend — the owner's decision is pending.
 
 ## 2. Owner's decisions
 
-Copied verbatim from the brief §2. These are settled; the spec restates them and does not reopen them.
+The owner's message of 2026-11-27, verbatim. These are settled; the spec restates them and does not reopen them.
 
 His message of 2026-11-27, verbatim:
 
@@ -35,19 +36,19 @@ His message of 2026-11-27, verbatim:
 
 ## 3. Orchestrator's rulings (restated as requirements)
 
-Each ruling from the brief §5C and its addendum, restated as a requirement with the check that proves it.
+Each ruling, restated as a requirement with the check that proves it.
 
 | #  | Requirement | Check |
 |----|-------------|-------|
 | S1 | **The interface is OpenAI's, verified.** The request field is `stream_format` with values `"sse"` and `"audio"`. When absent, behaviour is byte-for-byte unchanged from today. The SSE events are `speech.audio.delta` and `speech.audio.done`. Source: the upstream OpenAPI spec `openai/openai-openapi`, `openapi.yaml` on `master` (read 2026-11-27) — `CreateSpeechResponseStreamEvent` = `SpeechAudioDeltaEvent`(`type`, `audio`, both required) or `SpeechAudioDoneEvent`(`type`, `usage`, both required). The Rust crate `async-openai` `types/audio/stream.rs` (docs.rs, read 2026-11-27) confirms the same schema. At OpenAI the field's default is `audio`; Speakeasy's absent-means-today is ruling S1 and is documented as a deliberate difference — the README names it. | A test sends `stream_format: "sse"` and asserts each `data:` line's JSON matches the schema. A test sends `stream_format: "audio"` and asserts chunked transfer with the content type of the response format. A test omits `stream_format` and asserts the response is bit-for-bit unchanged from today. |
 | S2 | **Formats stream by evidence, not hope.** `pcm` streams always. For `wav`, `mp3` and `flac`, a probe encodes to a non-seekable sink (a `BytesIO` subclass whose `seek` raises `OSError`) with libsndfile (soundfile 0.14.0), decodes the concatenated bytes with an independent reader, and records the result. The sink is defined here because a plain `BytesIO` is seekable by definition. A format that cannot be encoded incrementally and decoded correctly is refused for streaming with 422 and a fixed message naming the formats that can. **Escape hatch: none; a format streams only if the probe shows it. ASSUMED until the probe runs.** Reviewer evidence (2026-11-27, this venv, the same sink, three 0.16 s chunks at 24 kHz): WAV refuses to open for writing (libsndfile asks for the file length up front); MP3 encodes but decodes to 15552 of 11520 samples; FLAC encodes but does not decode at all; only `pcm` streamed intact (23040 bytes, 11520 samples exactly). A sink that answers the initial length probe but raises on later seeks fails the same three formats with different artefacts (WAV decodes to 11564 of 11520 and stdlib `wave` rejects it; MP3 decodes 9432 of 11520). | `test_streaming_format_probe` — calls `_encode_chunk` on each format's first 0.16 s with the seek-raising sink and verifies the concatenated bytes decode correctly; formats that fail are absent from the allowed list. |
 | S3 | **Engines.** VoxCPM2 streams through `generate_streaming` (F16). Reverb has no streaming entry point (F17): a streaming request to `reverb-tts` returns the finished take as one chunk when it is ready. That is documented behaviour, not an error, and the response is not labelled with it. | `test_reverb_stream_returns_finished_take` — the Reverb path to a streaming request answers 200 with the full audio in one chunk. |
-| S4 | **Delivery changes, the take does not.** The audio of a stream is the take the non-streaming route would return for the same request and seed, to within float rounding: same sample count, largest absolute sample difference at most 1e-5 (measured 1.2e-6, F10). Byte identity is promised by neither path. Coder pins it with fake engines; the orchestrator measures it on the real engine at landing. | `test_stream_and_non_stream_same_take` — a fake VoxCPM2 that records its output returns identical samples from both paths (fake data, so byte identity holds). The orchestrator runs `ref/nds/stream_eq.py` on the real engine at landing and asserts one pass rule: same sample count and `max_abs_diff <= 1e-5`. |
+| S4 | **Delivery changes, the take does not.** The audio of a stream is the take the non-streaming route would return for the same request and seed, to within float rounding: same sample count, largest absolute sample difference at most 1e-5 (measured 1.2e-6, F10). Byte identity is promised by neither path. Coder pins it with fake engines; the orchestrator measures it on the real engine at landing. | `test_stream_and_non_stream_same_take` — a fake VoxCPM2 that records its output returns identical samples from both paths (fake data, so byte identity holds). The orchestrator runs `scripts/tts_roundtrip.py --stream` on the real engine at landing and asserts one pass rule: same sample count and `max_abs_diff <= 1e-5`. |
 | S5 | **Statistics.** On an SSE stream the final `speech.audio.done` event carries the four values of today's headers as JSON. On a raw chunked stream only what is known before the first byte is sent as a header (`X-Speakeasy-Engine` and `X-Speakeasy-Sample-Rate`); the other three are absent and the README says so. No HTTP trailers. | `test_sse_stream_final_event_carries_stats` — parses the last event and asserts `engine`, `elapsed`, `audio_duration` and `rtf` fields. `test_raw_stream_headers` — asserts `X-Speakeasy-Engine` and `X-Speakeasy-Sample-Rate` are present, the other three absent. |
 | S6 | **The engine never waits on the network.** One generating thread drives the engine and writes chunks to an in-memory bounded buffer; the handler reads that buffer as chunks arrive. The buffer is bounded for the largest allowed take (see §6.1), so generation runs to completion whatever the client does and the engine lock is held for the generation time only. A slow or stalled client never holds the engine. | `test_engine_runs_to_completion_when_client_stalls` — a fake engine that takes 0.2 s; the test reads one chunk, closes the connection, then asserts the engine finished and the lock was released. |
 | S7 | **A client that leaves is an ordinary outcome.** A disconnect mid-stream produces no 500 and no traceback at error level (one informational line). The generating thread finishes and releases the lock. The idle timer is bumped exactly as for a completed request. The "clone deleted mid-request is never a 500" contract holds for streams. An engine failure after the first byte ends the stream cleanly: an error event with a fixed message on an SSE stream, a truncated body on a raw one, and one error line in the log. | `test_disconnect_mid_stream_no_500` — the client disconnects; the next healthy request succeeds. `test_engine_failure_mid_stream_clean_close` — a fake engine that raises after two chunks; the SSE stream ends with an error event. |
 | S8 | **The event loop is never blocked.** Handlers follow the existing pattern: plain `def` on the threadpool. A test pins it: `/health/ready` answers while a stream is mid-take behind a fake engine that waits on an event. | `test_health_responds_during_stream` — a fake engine blocks on a `threading.Event`; a concurrent `/health/ready` call returns 200 within 2 s. |
-| S9 | **The page plays speech through Web Audio, from `pcm` carried in events.** For Speak, the page sends `response_format: "pcm"` and `stream_format: "sse"`, for both engines. It decodes each `speech.audio.delta` with `atob`, turns s16le into float samples, and schedules them on one `AudioContext` timeline as they arrive, each chunk starting where the previous one ends. The `AudioContext` is created at the rate of S15 and resumed inside the click handler. At `speech.audio.done` the page builds a WAV Blob from the samples (writing the 44-byte header itself) for the `<audio>` element and the download link exactly as today, and shows the four statistics from `usage`. Reverb arrives as one delta and takes the same path. The fallback is today's non-streaming request where `ReadableStream` is absent. No MediaSource, no dependency, no CSP change. Evidence: headless Chromium 128 `MediaSource.isTypeSupported` is false for `audio/wav`, `audio/flac`, `audio/pcm`; an `AudioContext` constructs at an arbitrary rate; a Blob cannot grow (`ref/nds/stream-capabilities.txt`). Proven in Chromium at landing; other browsers stay `ASSUMED`. | `test_csp_unchanged` — the existing UI test that pins the CSP header stays green unchanged. The orchestrator verifies play-as-it-arrives in a real browser at landing. |
+| S9 | **The page plays speech through Web Audio, from `pcm` carried in events.** For Speak, the page sends `response_format: "pcm"` and `stream_format: "sse"`, for both engines. It decodes each `speech.audio.delta` with `atob`, turns s16le into float samples, and schedules them on one `AudioContext` timeline as they arrive, each chunk starting where the previous one ends. The `AudioContext` is created at the rate of S15 and resumed inside the click handler. At `speech.audio.done` the page builds a WAV Blob from the samples (writing the 44-byte header itself) for the `<audio>` element and the download link exactly as today, and shows the four statistics from `usage`. Reverb arrives as one delta and takes the same path. The fallback is today's non-streaming request where `ReadableStream` is absent. No MediaSource, no dependency, no CSP change. Evidence: headless Chromium 128 `MediaSource.isTypeSupported` is false for `audio/wav`, `audio/flac`, `audio/pcm`; an `AudioContext` constructs at an arbitrary rate; a Blob cannot grow (probed in headless Chromium 128 on 2026-11-27). Proven in Chromium at landing; other browsers stay `ASSUMED`. | `test_csp_unchanged` — the existing UI test that pins the CSP header stays green unchanged. The orchestrator verifies play-as-it-arrives in a real browser at landing. |
 | S10 | **Unchanged by this workstream:** every non-streaming response, auth, the 64-character echo bound, `speed`, `cfg`, `design` and `style` semantics, the listing rules, the idle unload, and D4. | Every existing test stays green. |
 | S11 | **Cross-references.** Each TTS spec's speech section gains at most one line saying that streaming delivery is specified in this spec. Nothing else in those files changes. | `grep` of both spec files shows exactly one new line each. |
 | S12 | **One thread owns the engine lock for a stream.** The generating thread does what the non-streaming route does today, in the same order: take `tts_lock`; check the engine's state and, if it is not ready, hand the 503 reason to the handler and stop (today's route re-checks under the lock, `server.py:714-724`); generate; hand the first chunk to the handler; bump the idle timer; release `tts_lock` in a `finally` when the generator is exhausted, stopped under S13, or raises. The handler starts that thread, waits for its first item before building the response, and never takes the lock itself. The handler's wait has no timeout of its own: today's route blocks on the lock in the same way. | The lifecycle diagram in §6.1 reflects this. `test_lock_held_by_generating_thread` — the generating thread, not the handler, acquires `tts_lock`. |
@@ -91,13 +92,13 @@ Each ruling from the brief §5C and its addendum, restated as a requirement with
 
 - **F9 — CI.** `.github/workflows/test.yml:22` — `uv sync --all-groups` (no extras). The streaming tests must pass without the `tts` extra installed.
 
-### VERIFIED — `ref/nds/` (2026-11-27)
+### VERIFIED — the stock VoxCPM2 library on an AMD gfx1151 (2026-11-27)
 
-- **F10 — Stream equivalence.** `ref/nds/stream_eq.json` — streamed take and non-streamed take for the same request and seed: identical sample count; `max_abs_diff` 8.3e-7 (short), 1.2e-6 (medium); `max_diff_over_rms` 6.5e-6 and 8.5e-6; zero samples differ by more than 1e-3. Chunks are 0.16 s; the first arrives in 0.10 to 0.37 s (nine takes, spike 006).
+- **F10 — Stream equivalence.** Measured in the stock library, outside the server: streamed take and non-streamed take for the same request and seed: identical sample count; `max_abs_diff` 8.3e-7 (short), 1.2e-6 (medium); `max_diff_over_rms` 6.5e-6 and 8.5e-6; zero samples differ by more than 1e-3. Chunks are 0.16 s; the first arrives in 0.10 to 0.37 s (nine takes, spike 006).
 
-- **F11 — Stream determinism.** `ref/nds/stream_eq.json` — the streamed path reproduced itself with the same seed in both takes (`stream_same_seed_identical: true` on both lines). The non-streamed short take did not (`non_stream_same_seed_identical: false`). Neither path may promise byte identity.
+- **F11 — Stream determinism.** Measured the same way: the streamed path reproduced itself with the same seed in both takes (`stream_same_seed_identical: true` on both lines). The non-streamed short take did not (`non_stream_same_seed_identical: false`). Neither path may promise byte identity.
 
-- **F12 — `generate_streaming` signature.** `ref/nds/stream_eq.py:34,36` — `model.generate_streaming(*args, **kwargs) -> Generator[np.ndarray, None, None]` takes the same arguments as `generate`.
+- **F12 — `generate_streaming` signature.** The library's signature: `model.generate_streaming(*args, **kwargs) -> Generator[np.ndarray, None, None]` takes the same arguments as `generate`.
 
 - **F13 — Engine sample rates.** VoxCPM2: 48,000 Hz (`engines.py:259`, `self._model.tts_model.sample_rate` — the library's sample rate, 48 kHz speech). Reverb: 24,000 Hz (Higgs Audio V2 codec config `sample_rate: int = 24000`, read from installed transformers `configuration_higgs_audio_v2_tokenizer.py`; accessed as `self.codec.config.sample_rate` in `reverb_tts/tts.py:117`).
 
@@ -267,7 +268,7 @@ Client            Handler (threadpool)     Generating thread
 
 **Test with fakes:** `test_stream_and_non_stream_same_take` — a fake VoxCPM2 that records its output returns identical samples from both paths. The test asserts `np.array_equal(streamed, non_streamed)`.
 
-**Measure on real engine at landing:** the orchestrator runs `ref/nds/stream_eq.py` with one pass rule: the same sample count and `max_abs_diff <= 1e-5`.
+**Measure on the real engine at landing:** `scripts/tts_roundtrip.py --stream` checks the streamed take against the non-streaming take of the same request and seed with one pass rule: the same sample count and `max_abs_diff <= 1e-5`.
 
 ## 8. Statistics (S5)
 
@@ -308,7 +309,7 @@ The CSP at `server.py:369-372` must not change. The page's streaming code must n
 
 ## 10. Security requirements (SEC-5 to SEC-9)
 
-Each with the test that fails when it is broken. Source: brief §6.
+Each with the test that fails when it is broken.
 
 | # | Requirement | Test |
 |---|-------------|------|
@@ -477,7 +478,7 @@ In order; each merged by its coder against the tip of the completed slice before
 
 ## 14. Risks and open questions
 
-Carried from the brief §10. Each with who settles it and the planner's recommendation.
+Each with who settles it. The owner may overrule any of them.
 
 | # | Risk/Question | Settled by | Recommendation |
 |---|---------------|------------|----------------|
