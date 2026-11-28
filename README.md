@@ -394,6 +394,17 @@ Reverb-TTS has no streaming entry point, so a streaming request to it returns
 the finished take as a single chunk when it is ready — documented behaviour,
 not an error.
 
+### In the web page
+
+The page plays a stream live only while the engine keeps up with playback. It
+waits until 1.5 seconds of audio has arrived. If that took no longer than 1.5
+seconds it plays from there, each chunk after the previous one. If it took
+longer, the page keeps receiving and plays the whole take when the stream ends.
+If live playback ever runs dry, it finishes receiving and plays the rest.
+VoxCPM2 generates about one second of audio per second of wall time, so on most
+hardware the page plays its takes whole. The finished take is always intact.
+Reverb-TTS delivers a take as one piece, so for it the page behaves as before.
+
 ## Engine routing
 
 There is no routing: the `model` field names the engine, and the request reaches
