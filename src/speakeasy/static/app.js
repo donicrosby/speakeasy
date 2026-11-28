@@ -537,8 +537,19 @@ function streamingPayload(payload) {
   });
 }
 
-// One take's playback: a single AudioContext timeline, and every sample kept so
-// the finished take can be written as a WAV Blob for the download link.
+// One take's playback. The take starts in buffering: every delta is decoded and
+// kept and nothing is scheduled, until 1.5 s of audio is held. Then the page
+// decides once whether the engine keeps up with playback — the audio received
+// after the first chunk, over the seconds since the first chunk arrived, at
+// least 1. If it keeps up, everything held is scheduled and the take is live; if
+// not, the take stays in buffering until the stream ends. A live delta that
+// arrives after its start has passed switches the take to refill. Whatever is
+// unscheduled at speech.audio.done plays as one block. A take is thus played
+// whole, or live without gaps, or live until one pause and then whole again; it
+// never stutters. Every sample is kept so the finished take can be written as a
+// WAV Blob for the download link.
+const LIVE_LEAD_SECONDS = 1.5;
+
 function newStreamPlayer(rate) {
   const AudioCtx = window.AudioContext || window.webkitAudioContext;
   if (speakContext) speakContext.close();
@@ -546,7 +557,16 @@ function newStreamPlayer(rate) {
   // Resuming needs the click that started the request; a rejected promise only
   // means the take stays silent, so it is ignored.
   if (speakContext.resume) speakContext.resume();
-  return { ctx: speakContext, rate: rate, samples: [], end: 0 };
+  return {
+    ctx: speakContext,
+    rate: rate,
+    samples: [],   // every chunk, in order, for the WAV Blob
+    pending: [],   // chunks decoded but not yet scheduled
+    end: 0,        // when the last scheduled chunk ends, on the ctx clock
+    state: "buffering",
+    tested: false, // the keep-up test is made once
+    firstAt: 0,    // when the first chunk arrived, on the wall clock
+  };
 }
 
 // s16le bytes, base64, as the float samples Web Audio and the WAV writer take.
@@ -562,17 +582,69 @@ function decodePcm(base64) {
   return floats;
 }
 
-// Schedule one chunk after the previous one, so the take plays unbroken.
-function scheduleChunk(player, floats) {
+// Put one chunk on the timeline at `at`, and remember where it ends.
+function scheduleChunk(player, floats, at) {
   const buffer = player.ctx.createBuffer(1, floats.length, player.rate);
   buffer.copyToChannel(floats, 0);
   const source = player.ctx.createBufferSource();
   source.buffer = buffer;
   source.connect(player.ctx.destination);
-  if (player.end < player.ctx.currentTime) player.end = player.ctx.currentTime;
-  source.start(player.end);
-  player.end += buffer.duration;
+  source.start(at);
+  player.end = at + buffer.duration;
+}
+
+// Seconds of audio in `chunks`, from index `from`.
+function audioSeconds(player, chunks, from) {
+  let seconds = 0;
+  for (let i = from || 0; i < chunks.length; i++) {
+    seconds += chunks[i].length / player.rate;
+  }
+  return seconds;
+}
+
+// One delta, as it arrives. In buffering it is kept and nothing is scheduled;
+// the first time 1.5 s of audio is held, the engine is judged once. In live it
+// is scheduled where the previous chunk ended, unless that moment has passed —
+// the queue ran dry — which switches the take to refill. In refill it is kept,
+// unscheduled, until the stream ends.
+function receiveChunk(player, floats) {
   player.samples.push(floats);
+  if (player.state === "live") {
+    if (player.end < player.ctx.currentTime) player.state = "refill";
+    else return scheduleChunk(player, floats, player.end);
+  }
+  player.pending.push(floats);
+  if (player.state === "buffering" && !player.tested &&
+      audioSeconds(player, player.pending) >= LIVE_LEAD_SECONDS) {
+    decideKeepUp(player);
+  }
+}
+
+// The one keep-up decision, taken when 1.5 s of audio is held. The first chunk
+// is left out of the rate: its own latency says nothing about the engine's. No
+// elapsed time (every chunk at the same instant) counts as keeping up. When it
+// keeps up, everything held is scheduled from now and the take is live.
+function decideKeepUp(player) {
+  player.tested = true;
+  const elapsed = (Date.now() - player.firstAt) / 1000;
+  const kept = audioSeconds(player, player.samples, 1);
+  if (elapsed && kept / elapsed < 1) return;
+  player.state = "live";
+  let at = player.ctx.currentTime;
+  for (const chunk of player.pending) {
+    scheduleChunk(player, chunk, at);
+    at = player.end;
+  }
+  player.pending = [];
+}
+
+// At speech.audio.done, play whatever is still unscheduled as one block, from
+// the later of the last chunk's end and the present.
+function finishStream(player) {
+  if (!player.pending.length) return;
+  const at = Math.max(player.end, player.ctx.currentTime);
+  scheduleChunk(player, concatSamples(player.pending), at);
+  player.pending = [];
 }
 
 function concatSamples(chunks) {
@@ -628,14 +700,16 @@ async function runSpeechStreaming(payload) {
     if (event.type === SSE_DELTA) {
       if (!firstAt) {
         firstAt = Date.now();
+        player.firstAt = firstAt;
         ticker = window.setInterval(() => {
           $("speak-meta").textContent =
             "receiving… " + ((Date.now() - firstAt) / 1000).toFixed(1) + " s";
         }, 250);
       }
-      scheduleChunk(player, decodePcm(event.audio));
+      receiveChunk(player, decodePcm(event.audio));
     } else if (event.type === SSE_DONE) {
       usage = event.usage;
+      finishStream(player);
     } else if (event.type === "error") {
       throw new Error((event.error && event.error.message) || MSG.ttsError);
     }
