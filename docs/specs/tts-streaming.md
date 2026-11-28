@@ -172,9 +172,9 @@ After `speech.audio.done` the connection closes.
 | Format | Streams | Probe result |
 |--------|---------|-------------|
 | `pcm` | Always | Raw s16le at engine rate — no container, no seeking, streams by construction. |
-| `wav` | **ASSUMED until probe runs** | libsndfile writes WAV to the seek-raising sink (§3 S2). Probe encodes → decodes → checks header. Reviewer evidence (F7): fails. |
-| `mp3` | **ASSUMED until probe runs** | libsndfile writes MP3 to the seek-raising sink. Probe encodes → decodes → checks frames. Reviewer evidence (F7): fails. |
-| `flac` | **ASSUMED until probe runs** | libsndfile writes FLAC to the seek-raising sink. Probe encodes → decodes → checks frames. Reviewer evidence (F7): fails. |
+| `wav` | **No (422)** | libsndfile writes WAV to the seek-raising sink (§3 S2). Probe encodes → decodes → checks header. Reviewer evidence (F7): fails. |
+| `mp3` | **No (422)** | libsndfile writes MP3 to the seek-raising sink. Probe encodes → decodes → checks frames. Reviewer evidence (F7): fails. |
+| `flac` | **No (422)** | libsndfile writes FLAC to the seek-raising sink. Probe encodes → decodes → checks frames. Reviewer evidence (F7): fails. |
 
 A format that fails the probe answers 422: `{"error": {"message": "streaming not supported for format '<fmt>'. Supported: pcm, <others>"}}`.
 
